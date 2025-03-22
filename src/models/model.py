@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import xgboost as xgb
 from sklearn.preprocessing import PowerTransformer, StandardScaler
 from sklearn.linear_model import LogisticRegression
@@ -22,22 +23,71 @@ class ML_model:
         self.input_params = input_params
         self.random_state = random_state
         self.transformation = transformation
-        self.available_subsets = available_subsets
+        self.available_subsets = available_subsets  # Now expects dict of {subset_name: [feature_names]}
         self.class_weight = class_weight
         self.optimal_threshold = 0.5  # F1-optimized threshold (default)
         self.sensitivity_threshold = None  # Sensitivity-optimized threshold
         self.target_sensitivity = None  # Target sensitivity value
         self.scaler = None
         self.best_params = None
+        self.feature_names_ = None  # Store feature names used during training
         
+    def _ensure_dataframe(self, X):
+        """Convert input to DataFrame if it's not already one"""
+        if isinstance(X, np.ndarray):
+            if self.feature_names_ is not None:
+                # If we know the feature names, use them
+                return pd.DataFrame(X, columns=self.feature_names_)
+            else:
+                # Otherwise use generic column names
+                return pd.DataFrame(X, columns=[f'feature_{i}' for i in range(X.shape[1])])
+        return X  # Already a DataFrame
+    
     def _preprocess(self, X, subset=None, fit=False):
-        """Preprocess data with feature selection and scaling"""
-        # Feature selection
-        if subset is not None and subset != 'all':
+        """
+        Preprocess data with feature selection and scaling using named features.
+        Always uses explicitly defined feature subsets.
+        """
+        # Convert to DataFrame if needed
+        X = self._ensure_dataframe(X)
+        
+        # Feature selection by name - always use a named subset
+        if subset is not None:
             if subset not in self.available_subsets:
-                raise ValueError(f"Unknown feature subset: {subset}")
-            X = X[:, self.available_subsets[subset]]
+                raise ValueError(f"Unknown feature subset: {subset}. Available subsets: {list(self.available_subsets.keys())}")
             
+            selected_features = self.available_subsets[subset]
+            
+            # Check for missing required features
+            missing_features = [f for f in selected_features if f not in X.columns]
+            if missing_features:
+                raise ValueError(f"Missing required features for subset '{subset}': {missing_features}")
+            
+            # Select only the features in the subset
+            X = X[selected_features]
+        else:
+            # Default to 'all' subset if none specified
+            if 'all' in self.available_subsets:
+                selected_features = self.available_subsets['all']
+                
+                # Filter to include only available features from the 'all' subset
+                available_features = [f for f in selected_features if f in X.columns]
+                
+                # Warn about missing features
+                missing_features = [f for f in selected_features if f not in X.columns]
+                if missing_features:
+                    import warnings
+                    warnings.warn(f"Missing features from 'all' subset: {missing_features}")
+                
+                X = X[available_features]
+    
+        # Store feature names during fitting
+        if fit:
+            self.feature_names_ = X.columns.tolist()
+        
+        # Convert to numpy for scaling (sklearn expects numpy arrays)
+        X_array = X.values
+        
         # Scaling
         if self.transformation:
             if fit:
@@ -47,11 +97,15 @@ class ML_model:
                     self.scaler = PowerTransformer(method='yeo-johnson')
                 else:
                     raise ValueError("Transformation must be 'standard' or 'yeo-johnson'")
-                return self.scaler.fit_transform(X)
+                X_scaled = self.scaler.fit_transform(X_array)
             else:
                 if self.scaler is None:
                     raise ValueError("Scaler not fitted. Call fit() first.")
-                return self.scaler.transform(X)
+                X_scaled = self.scaler.transform(X_array)
+            
+            # Convert back to DataFrame with original column names
+            return pd.DataFrame(X_scaled, columns=X.columns)
+        
         return X
     
     def _compute_optimal_threshold(self, y_true, y_proba):
@@ -130,24 +184,9 @@ class ML_model:
                 random_state=self.random_state
             )
             
-        elif self.model_type == 'lightgbm':
-            if self.class_weight == 'balanced':
-                class_weights = 'balanced'
-            else:
-                class_weights = None
-                
-            self.model = lgb.LGBMClassifier(
-                n_estimators=params.get('n_estimators', 100),
-                max_depth=params.get('max_depth', 3),
-                learning_rate=params.get('learning_rate', 0.1),
-                colsample_bytree=params.get('colsample_bytree', 1.0),
-                class_weight=class_weights,
-                random_state=self.random_state
-            )
-            
         elif self.model_type == 'gmm':
             # For GMM, we train on positive class only and use density estimation
-            X_positive = X_processed[y == 1]
+            X_positive = X_processed[y == 1].values
             self.model = GaussianMixture(
                 n_components=params.get('n_components', 5),
                 covariance_type=params.get('covariance_type', 'full'),
@@ -156,12 +195,12 @@ class ML_model:
             self.model.fit(X_positive)
             
             # Compute optimal threshold using all training data
-            scores = self.model.score_samples(X_processed)
+            scores = self.model.score_samples(X_processed.values)
             self.optimal_threshold = self._compute_optimal_threshold(y, scores)
             return self
             
-        # Fit model
-        self.model.fit(X_processed, y)
+        # Fit model (sklearn models expect numpy arrays)
+        self.model.fit(X_processed.values, y)
         
         # Compute optimal threshold for classification (except GMM)
         if self.model_type != 'gmm':
@@ -175,7 +214,7 @@ class ML_model:
         Make predictions with specified threshold options
         
         Args:
-            X: Features to predict on
+            X: Features to predict on (DataFrame or array)
             feature_subset: Subset of features to use
             threshold: Custom threshold to use (overrides other options)
             use_sensitivity_threshold: If True, use sensitivity threshold, otherwise use F1 threshold
@@ -194,7 +233,7 @@ class ML_model:
         X_processed = self._preprocess(X, feature_subset)
         
         if self.model_type == 'gmm':
-            scores = self.model.score_samples(X_processed)
+            scores = self.model.score_samples(X_processed.values)
             return (scores >= final_threshold).astype(int)
         else:
             proba = self.predict_proba(X, feature_subset)
@@ -205,9 +244,9 @@ class ML_model:
         X_processed = self._preprocess(X, feature_subset)
         
         if self.model_type == 'gmm':
-            return self.model.score_samples(X_processed)
+            return self.model.score_samples(X_processed.values)
         else:
-            return self.model.predict_proba(X_processed)[:, 1]
+            return self.model.predict_proba(X_processed.values)[:, 1]
     
     def get_available_thresholds(self):
         """Get information about available thresholds"""
@@ -222,6 +261,10 @@ class ML_model:
             }
             
         return thresholds
+    
+    def get_feature_names(self):
+        """Get the feature names used by the model"""
+        return self.feature_names_
             
     def save(self, filepath):
         """Save the model to disk"""

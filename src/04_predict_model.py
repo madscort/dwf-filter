@@ -13,7 +13,7 @@ from models.model import ML_model
 def find_sensitivity_threshold(y_true, y_proba, target_sensitivity):
     """Find threshold that achieves target sensitivity on training data"""
     fpr, tpr, thresholds = roc_curve(y_true, y_proba)
-    # Find the threshold closest to target sensitityve
+    # Find the threshold closest to target sensitivity
     valid_idx = np.where(tpr >= target_sensitivity)[0]
     if len(valid_idx) == 0:
         return None  # Can't achieve target sensitivity
@@ -21,7 +21,8 @@ def find_sensitivity_threshold(y_true, y_proba, target_sensitivity):
     return thresholds[optimal_idx]
 
 def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, info_holdout=None, 
-                            repetition=1, target_sensitivity=None, model_save_path=None):
+                            repetition=1, target_sensitivity=None, model_save_path=None,
+                            variant_type='indel'):
     """
     Train model using 5-fold CV for parameter selection, then predict on holdout set.
     Optionally adjust threshold to achieve target sensitivity.
@@ -42,12 +43,15 @@ def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, inf
         
         # Perform 5-fold CV for this parameter set
         for train_idx, val_idx in cv.split(X_train):
-            X_fold_train, X_fold_val = X_train[train_idx], X_train[val_idx]
-            y_fold_train, y_fold_val = y_train[train_idx], y_train[val_idx]
+            # Get fold data - now using DataFrames
+            X_fold_train = X_train.iloc[train_idx]
+            X_fold_val = X_train.iloc[val_idx]
+            y_fold_train = y_train[train_idx]
+            y_fold_val = y_train[val_idx]
             
             # Train and evaluate on this fold
             model.fit(X_fold_train, y_fold_train, **params)
-            y_pred_val = model.predict(X_fold_val, feature_subset=params.get('feature_subset', None))
+            y_pred_val = model.predict(X_fold_val, feature_subset=params.get('feature_subset', 'all'))
             fold_scores.append(f1_score(y_fold_val, y_pred_val))
         
         # Store average score for this parameter set
@@ -68,8 +72,9 @@ def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, inf
     model.fit(X_train, y_train, **best_params)
 
     # Get predictions with F1-optimized threshold
-    y_pred_orig = model.predict(X_holdout, feature_subset=best_params.get('feature_subset', None))
-    y_proba = model.predict_proba(X_holdout, feature_subset=best_params.get('feature_subset', None))
+    feature_subset = best_params.get('feature_subset', 'all')
+    y_pred_orig = model.predict(X_holdout, feature_subset=feature_subset)
+    y_proba = model.predict_proba(X_holdout, feature_subset=feature_subset)
     
     # Calculate original metrics
     orig_threshold = model.optimal_threshold
@@ -77,10 +82,11 @@ def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, inf
     orig_sensitivity = recall_score(y_holdout, y_pred_orig)
     
     # If target sensitivity is specified, set sensitivity threshold
-    print("F1: ", model.optimal_threshold)
-    train_proba = model.predict_proba(X_train, feature_subset=best_params.get('feature_subset', None))
+    print(f"F1-optimal threshold: {model.optimal_threshold}")
+    train_proba = model.predict_proba(X_train, feature_subset=feature_subset)
     sens_thresh = find_sensitivity_threshold(y_train, train_proba, target_sensitivity/100)
-    print("Sens: ", sens_thresh)
+    print(f"Sensitivity threshold: {sens_thresh}")
+    
     if target_sensitivity is not None:
         # Set the sensitivity threshold
         sensitivity_threshold = model.set_sensitivity_threshold(X_train, y_train, target_sensitivity/100)
@@ -89,7 +95,7 @@ def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, inf
             # Get predictions using sensitivity threshold
             y_pred_sens = model.predict(
                 X_holdout, 
-                feature_subset=best_params.get('feature_subset', None),
+                feature_subset=feature_subset,
                 use_sensitivity_threshold=True
             )
             new_f1 = f1_score(y_holdout, y_pred_sens)
@@ -109,8 +115,10 @@ def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, inf
         y_pred = y_pred_orig
 
     if model_save_path:
-        model_save_path = Path(model_save_path) / f"{model.model_type}_indel_model.joblib"
+        model_save_path = Path(model_save_path) / f"{model.model_type}_{variant_type}_model.joblib"
         model.save(model_save_path)
+        logging.info(f"Model saved to {model_save_path}")
+        logging.info(f"Model feature names: {model.feature_names_}")
     
     # Collect predictions
     prediction_data = []

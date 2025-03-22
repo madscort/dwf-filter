@@ -37,123 +37,103 @@ Variant = namedtuple(
 )
 S_idx = namedtuple("S_idx", ["AD", "DP", "GT"])
 
+# Define all feature subsets with explicit column names
+
+# Complete feature set - used for 'all' subset
+all_features = [
+    "AD_sample", "DP_site", "VAF", "dDP", "GQ_sample",
+    "ASSEMBLED_HAPS", "AS_BaseQRankSum", "AS_FS", "AS_MQ", "AS_MQRankSum",
+    "AS_QD", "AS_ReadPosRankSum", "AS_SOR", "ClippingRankSum", "HAPCOMP", 
+    "HAPDOM", "HEC", "LikelihoodRankSum", "MLEAC", "MLEAF", "X_GCC", "X_HIL"
+]
+
+# Previous subsets
 broad = ["AS_FS", "AS_SOR", "AS_ReadPosRankSum", "AS_MQRankSum", "AS_QD", "AS_MQ"]
 
 normal_loose = [
-    "ASSEMBLED_HAPS",
-    "AS_BaseQRankSum",
-    "AS_ReadPosRankSum",
-    "AS_SOR",
-    "ClippingRankSum",
-    "DP_site",
-    "HAPCOMP",
-    "HAPDOM",
-    "HEC",
-    "LikelihoodRankSum",
-    "X_GCC",
+    "ASSEMBLED_HAPS", "AS_BaseQRankSum", "AS_ReadPosRankSum", "AS_SOR",
+    "ClippingRankSum", "DP_site", "HAPCOMP", "HAPDOM", "HEC",
+    "LikelihoodRankSum", "X_GCC"
 ]
 
 normal_strict = [
-    "AS_BaseQRankSum",
-    "AS_ReadPosRankSum",
-    "AS_SOR",
-    "DP_site",
-    "HAPDOM",
-    "HEC",
-    "LikelihoodRankSum",
-    "X_GCC",
+    "AS_BaseQRankSum", "AS_ReadPosRankSum", "AS_SOR", "DP_site",
+    "HAPDOM", "HEC", "LikelihoodRankSum", "X_GCC"
 ]
 
 mrmr10snv = [
-    "AS_SOR",
-    "AS_MQRankSum",
-    "HAPCOMP",
-    "LikelihoodRankSum",
-    "AS_ReadPosRankSum",
-    "AS_FS",
-    "AS_MQ",
-    "VAF",
-    "DP_site",
-    "MLEAF",
+    "AS_SOR", "AS_MQRankSum", "HAPCOMP", "LikelihoodRankSum",
+    "AS_ReadPosRankSum", "AS_FS", "AS_MQ", "VAF", "DP_site", "MLEAF"
 ]
+
 mrmr5snv = [
-    "AS_SOR",
-    "AS_MQRankSum",
-    "HAPCOMP",
-    "LikelihoodRankSum",
-    "AS_ReadPosRankSum",
+    "AS_SOR", "AS_MQRankSum", "HAPCOMP", "LikelihoodRankSum", "AS_ReadPosRankSum"
 ]
+
 mrmr10indel = [
-    "MLEAF",
-    "X_HIL",
-    "VAF",
-    "MLEAC",
-    "AS_QD",
-    "AD_sample",
-    "AS_FS",
-    "dDP",
-    "GQ_sample",
-    "AS_MQRankSum",
+    "MLEAF", "X_HIL", "VAF", "MLEAC", "AS_QD", "AD_sample",
+    "AS_FS", "dDP", "GQ_sample", "AS_MQRankSum"
 ]
+
 mrmr5indel = ["MLEAF", "X_HIL", "VAF", "MLEAC", "AS_QD"]
+
 mrmr10 = [
-    "HAPCOMP",
-    "dDP",
-    "DP_site",
-    "X_HIL",
-    "AS_SOR",
-    "MLEAF",
-    "LikelihoodRankSum",
-    "AS_MQRankSum",
-    "VAF",
-    "ASSEMBLED_HAPS",
+    "HAPCOMP", "dDP", "DP_site", "X_HIL", "AS_SOR", "MLEAF",
+    "LikelihoodRankSum", "AS_MQRankSum", "VAF", "ASSEMBLED_HAPS"
 ]
+
 mrmr5 = ["HAPCOMP", "dDP", "DP_site", "X_HIL", "AS_SOR"]
 
+# Feature subset dictionaries with 'all' explicitly defined
 feature_subsets_snv = {
+    "all": all_features,
     "mrmr10": mrmr10snv,
     "mrmr5": mrmr5snv,
     "broad": broad,
     "normal_loose": normal_loose,
-    "normal_strict": normal_strict,
+    "normal_strict": normal_strict
 }
 
 feature_subsets_indel = {
+    "all": all_features,
     "mrmr10": mrmr10indel,
     "mrmr5": mrmr5indel,
     "broad": broad,
     "normal_loose": normal_loose,
-    "normal_strict": normal_strict,
+    "normal_strict": normal_strict
 }
 
 feature_subsets_all = {
+    "all": all_features,
     "mrmr10": mrmr10,
     "mrmr5": mrmr5,
     "broad": broad,
     "normal_loose": normal_loose,
-    "normal_strict": normal_strict,
+    "normal_strict": normal_strict
 }
 
-def extract_features(dataset_path: Path, feature_subsets, skip_info: bool=True) -> np.array:
-    """Extract features and prepare feature subsets from dataset"""
+def extract_features(dataset_path: Path, feature_subsets, skip_info: bool=True):
+    """
+    Extract features and prepare feature subsets from dataset.
+    Returns features as a DataFrame with named columns (not numpy array).
+    """
     dataset = pd.read_csv(dataset_path, sep='\t')
 
     # Extract features and labels
-    X = dataset.drop(columns=['gene_target','variant_id','CHROM','POS','REF','ALT',
-                            'unique_variant_id','label','is_pool_pin','is_wgs_theoretical_pin',
-                            'is_lof','is_p','is_lofp','is_acmg','is_snv'])
+    non_feature_cols = ['gene_target', 'variant_id', 'CHROM', 'POS', 'REF', 'ALT',
+                         'unique_variant_id', 'label', 'is_pool_pin', 'is_wgs_theoretical_pin',
+                         'is_lof', 'is_p', 'is_lofp', 'is_acmg', 'is_snv']
 
-    y = dataset['label']
-    info = dataset[['gene_target','variant_id','unique_variant_id','CHROM','POS',
-                   'REF','ALT','is_pool_pin','is_wgs_theoretical_pin','is_lof',
-                   'is_p','is_lofp','is_acmg','is_snv','AD_sample','DP_site','VAF']]
+    feature_cols = [col for col in dataset.columns if col not in non_feature_cols]
+    X = dataset[feature_cols]
 
-    # Create feature subset indices
-    feature_subsets_np = {}
-    for subset, columns in feature_subsets.items():
-        feature_subsets_np[subset] = [X.columns.get_loc(col) for col in columns]
+    y = dataset['label'].values
 
-    return X.values, y.values, info, feature_subsets_np
+    info = dataset[['gene_target', 'variant_id', 'unique_variant_id', 'CHROM', 'POS',
+                   'REF', 'ALT', 'is_pool_pin', 'is_wgs_theoretical_pin', 'is_lof',
+                   'is_p', 'is_lofp', 'is_acmg', 'is_snv', 'AD_sample', 'DP_site', 'VAF']]
+    
+    return X, y, info, feature_subsets
 
 def get_variants_from_pool(variant_table: Path, tool: str = "GATK") -> set:
     """
