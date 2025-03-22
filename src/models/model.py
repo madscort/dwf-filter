@@ -1,16 +1,12 @@
 import numpy as np
-from copy import deepcopy
-import joblib
-import os
-from pathlib import Path
-from itertools import product
 import xgboost as xgb
-import lightgbm as lgb
 from sklearn.preprocessing import PowerTransformer, StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.mixture import GaussianMixture
-from sklearn.metrics import f1_score, precision_recall_curve
+from sklearn.metrics import f1_score, precision_recall_curve, recall_score, roc_curve
+import joblib
+import os
 
 class ML_model:
     def __init__(
@@ -28,8 +24,11 @@ class ML_model:
         self.transformation = transformation
         self.available_subsets = available_subsets
         self.class_weight = class_weight
-        self.optimal_threshold = 0.5
+        self.optimal_threshold = 0.5  # F1-optimized threshold (default)
+        self.sensitivity_threshold = None  # Sensitivity-optimized threshold
+        self.target_sensitivity = None  # Target sensitivity value
         self.scaler = None
+        self.best_params = None
         
     def _preprocess(self, X, subset=None, fit=False):
         """Preprocess data with feature selection and scaling"""
@@ -56,7 +55,7 @@ class ML_model:
         return X
     
     def _compute_optimal_threshold(self, y_true, y_proba):
-        """Compute optimal classification threshold using PR curve"""
+        """Compute optimal classification threshold using PR curve (maximizes F1)"""
         precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
         # Add 0 to thresholds for edge case where all predictions are negative
         thresholds = np.append(thresholds, 1)
@@ -64,9 +63,29 @@ class ML_model:
         f1_scores = 2 * (precision * recall) / (precision + recall + 1e-7)
         # Return threshold that maximizes F1 score
         return thresholds[np.argmax(f1_scores)]
+    
+    def _compute_sensitivity_threshold(self, y_true, y_proba, target_sensitivity):
+        """Compute threshold that achieves target sensitivity"""
+        fpr, tpr, thresholds = roc_curve(y_true, y_proba)
+        # Find the threshold closest to target sensitivity
+        valid_idx = np.where(tpr >= target_sensitivity)[0]
+        if len(valid_idx) == 0:
+            return None  # Can't achieve target sensitivity
+        optimal_idx = valid_idx[np.argmin(np.abs(tpr[valid_idx] - target_sensitivity))]
+        return thresholds[optimal_idx]
+
+    def set_sensitivity_threshold(self, X, y, target_sensitivity):
+        """Set threshold to achieve target sensitivity on provided data"""
+        self.target_sensitivity = target_sensitivity
+        y_proba = self.predict_proba(X, self.best_params.get('feature_subset', None))
+        self.sensitivity_threshold = self._compute_sensitivity_threshold(y, y_proba, target_sensitivity)
+        return self.sensitivity_threshold
 
     def fit(self, X, y, **params):
         """Fit model with preprocessing and class weights"""
+        # Store the parameters for later use
+        self.best_params = params
+        
         # Preprocess features
         X_processed = self._preprocess(X, params.get('feature_subset'), fit=True)
         
@@ -91,6 +110,7 @@ class ML_model:
             self.model = RandomForestClassifier(
                 n_estimators=params.get('n_estimators', 100),
                 max_depth=params.get('max_depth', None),
+                min_samples_leaf=params.get('min_samples_leaf', 1),
                 random_state=self.random_state,
                 class_weight=self.class_weight
             )
@@ -150,19 +170,35 @@ class ML_model:
             
         return self
 
-    def predict(self, X, feature_subset=None, threshold=None):
-        """Make predictions with optional custom threshold"""
-        if threshold is None:
-            threshold = self.optimal_threshold
+    def predict(self, X, feature_subset=None, threshold=None, use_sensitivity_threshold=False):
+        """
+        Make predictions with specified threshold options
+        
+        Args:
+            X: Features to predict on
+            feature_subset: Subset of features to use
+            threshold: Custom threshold to use (overrides other options)
+            use_sensitivity_threshold: If True, use sensitivity threshold, otherwise use F1 threshold
+            
+        Returns:
+            Binary predictions
+        """
+        if threshold is not None:
+            final_threshold = threshold
+        elif use_sensitivity_threshold and self.sensitivity_threshold is not None:
+            final_threshold = self.sensitivity_threshold
+        else:
+            # Default to F1-optimized threshold
+            final_threshold = self.optimal_threshold
             
         X_processed = self._preprocess(X, feature_subset)
         
         if self.model_type == 'gmm':
             scores = self.model.score_samples(X_processed)
-            return (scores >= threshold).astype(int)
+            return (scores >= final_threshold).astype(int)
         else:
             proba = self.predict_proba(X, feature_subset)
-            return (proba >= threshold).astype(int)
+            return (proba >= final_threshold).astype(int)
 
     def predict_proba(self, X, feature_subset=None):
         """Predict probabilities or scores"""
@@ -172,33 +208,21 @@ class ML_model:
             return self.model.score_samples(X_processed)
         else:
             return self.model.predict_proba(X_processed)[:, 1]
+    
+    def get_available_thresholds(self):
+        """Get information about available thresholds"""
+        thresholds = {
+            'f1_optimal': self.optimal_threshold
+        }
+        
+        if self.sensitivity_threshold is not None:
+            thresholds['sensitivity'] = {
+                'threshold': self.sensitivity_threshold,
+                'target': self.target_sensitivity
+            }
             
-    def search_hyperparameters(self, X, y):
-        """Search for best hyperparameters"""
-        best_score = -np.inf
-        best_params = None
-        best_model = None
-
-        param_grid = [dict(zip(self.input_params.keys(), values)) 
-                     for values in product(*self.input_params.values())]
-
-        for params in param_grid:
-            self.fit(X, y, **params)
+        return thresholds
             
-            # Use optimal threshold for evaluation
-            y_pred = self.predict(X, feature_subset=params.get('feature_subset'))
-            score = f1_score(y, y_pred)
-            
-            if score > best_score:
-                best_score = score
-                best_params = params
-                if self.model_type == 'gmm':
-                    best_model = (deepcopy(self.model), self.optimal_threshold)
-                else:
-                    best_model = deepcopy(self.model)
-
-        return best_model, best_params, best_score
-
     def save(self, filepath):
         """Save the model to disk"""
         # Ensure directory exists
@@ -208,28 +232,5 @@ class ML_model:
     
     @classmethod
     def load(cls, filepath):
-        """Load a saved model from disk"""
+        """Load a saved model from disk """
         return joblib.load(filepath)
-    
-    def save_metadata(self, filepath):
-        """Save model metadata to a text file"""
-        with open(filepath, 'w') as f:
-            f.write(f"Model Type: {self.model_type}\n")
-            f.write(f"Optimal Threshold: {self.optimal_threshold}\n")
-            f.write(f"Transformation: {self.transformation}\n")
-            
-            if self.best_params:
-                f.write("\nBest Parameters:\n")
-                for key, value in self.best_params.items():
-                    f.write(f"- {key}: {value}\n")
-                
-            if hasattr(self.model, 'feature_importances_'):
-                f.write("\nFeature Importances:\n")
-                if self.best_params and self.best_params.get('feature_subset', None) != 'all':
-                    subset = self.best_params['feature_subset']
-                    feature_indices = self.available_subsets[subset]
-                    for i, importance in enumerate(self.model.feature_importances_):
-                        f.write(f"- Feature {feature_indices[i]}: {importance:.6f}\n")
-                else:
-                    for i, importance in enumerate(self.model.feature_importances_):
-                        f.write(f"- Feature {i}: {importance:.6f}\n")
