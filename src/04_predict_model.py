@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import argparse
 import logging
+import joblib
 from pathlib import Path
 from itertools import product
 from sklearn.metrics import f1_score, roc_curve, recall_score
@@ -20,10 +21,13 @@ def find_sensitivity_threshold(y_true, y_proba, target_sensitivity):
     return thresholds[optimal_idx]
 
 def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, info_holdout=None, 
-                            repetition=1, target_sensitivity=None):
+                            repetition=1, target_sensitivity=None, model_save_path=None):
     """
     Train model using 5-fold CV for parameter selection, then predict on holdout set.
     Optionally adjust threshold to achieve target sensitivity.
+    Optionally save the trained model to disk.
+    
+    Returns DataFrame with predictions and model evaluation metrics.
     """
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
     param_grid = [dict(zip(model.input_params.keys(), v)) 
@@ -62,8 +66,8 @@ def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, inf
     
     # Train final model on full training data with best parameters
     model.fit(X_train, y_train, **best_params)
-    
-    # Get predictions with original threshold
+
+    # Get predictions with F1-optimized threshold
     y_pred_orig = model.predict(X_holdout, feature_subset=best_params.get('feature_subset', None))
     y_proba = model.predict_proba(X_holdout, feature_subset=best_params.get('feature_subset', None))
     
@@ -72,26 +76,41 @@ def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, inf
     orig_f1 = f1_score(y_holdout, y_pred_orig)
     orig_sensitivity = recall_score(y_holdout, y_pred_orig)
     
-    # If target sensitivity is specified, find new threshold
-    final_threshold = orig_threshold
+    # If target sensitivity is specified, set sensitivity threshold
+    print("F1: ", model.optimal_threshold)
+    train_proba = model.predict_proba(X_train, feature_subset=best_params.get('feature_subset', None))
+    sens_thresh = find_sensitivity_threshold(y_train, train_proba, target_sensitivity/100)
+    print("Sens: ", sens_thresh)
     if target_sensitivity is not None:
-        train_proba = model.predict_proba(X_train, feature_subset=best_params.get('feature_subset', None))
-        new_threshold = find_sensitivity_threshold(y_train, train_proba, target_sensitivity)
+        # Set the sensitivity threshold
+        sensitivity_threshold = model.set_sensitivity_threshold(X_train, y_train, target_sensitivity/100)
         
-        if new_threshold is not None:
-            final_threshold = new_threshold
-            y_pred = (y_proba >= final_threshold).astype(int)
-            new_f1 = f1_score(y_holdout, y_pred)
-            new_sensitivity = recall_score(y_holdout, y_pred)
+        if sensitivity_threshold is not None:
+            # Get predictions using sensitivity threshold
+            y_pred_sens = model.predict(
+                X_holdout, 
+                feature_subset=best_params.get('feature_subset', None),
+                use_sensitivity_threshold=True
+            )
+            new_f1 = f1_score(y_holdout, y_pred_sens)
+            new_sensitivity = recall_score(y_holdout, y_pred_sens)
             
-            logging.info(f"Original threshold: {orig_threshold:.4f}, New threshold: {final_threshold:.4f}")
-            logging.info(f"Original F1: {orig_f1:.4f}, New F1: {new_f1:.4f}")
-            logging.info(f"Original Sensitivity: {orig_sensitivity:.4f}, New Sensitivity: {new_sensitivity:.4f}")
+            logging.info(f"F1-optimal threshold: {orig_threshold:.4f}, Sensitivity threshold: {sensitivity_threshold:.4f}")
+            logging.info(f"F1-optimal F1: {orig_f1:.4f}, Sensitivity-based F1: {new_f1:.4f}")
+            logging.info(f"F1-optimal Sensitivity: {orig_sensitivity:.4f}, Sensitivity-based Sensitivity: {new_sensitivity:.4f}")
+            
+            # Use sensitivity-based predictions 
+            y_pred = y_pred_sens
         else:
             logging.warning(f"Could not achieve target sensitivity {target_sensitivity}")
             y_pred = y_pred_orig
     else:
+        # Use F1-optimal predictions
         y_pred = y_pred_orig
+
+    if model_save_path:
+        model_save_path = Path(model_save_path) / f"{model.model_type}_indel_model.joblib"
+        model.save(model_save_path)
     
     # Collect predictions
     prediction_data = []
@@ -104,11 +123,17 @@ def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, inf
             'model_name': model.model_type,
             'best_parameter': best_params,
             'cv_score': best_result['mean_score'],
-            'optimal_threshold': final_threshold,
+            'f1_threshold': orig_threshold,
             'target_sensitivity': target_sensitivity
         }
+        
+        # Add sensitivity threshold if available
+        if target_sensitivity is not None and model.sensitivity_threshold is not None:
+            prediction_entry['sensitivity_threshold'] = model.sensitivity_threshold
+        
         if info_holdout is not None:
             prediction_entry.update(info_holdout.iloc[idx].to_dict())
+        
         prediction_data.append(prediction_entry)
     
     return pd.DataFrame(prediction_data)
@@ -118,14 +143,13 @@ def main():
     parser.add_argument('--model', type=str, choices=['logistic_regression', 'xgboost', 'random_forest', 'gmm'],
                         help='Model type to use for training: logistic_regression, xgboost, random_forest, gmm')
     parser.add_argument('--all_models', action='store_true', help='Run the script for all models sequentially', default=True)
-    parser.add_argument('--output', type=str, help='Path to save the output predictions file', default='/Users/madsnielsen/Predisposed/projects/filter_manuscript_repo/output/holdout_preds/E2LLC_indel.tsv')
+    parser.add_argument('--output', type=str, help='Path to save the output predictions file', default='/Users/madsnielsen/Predisposed/projects/filter_manuscript_repo/output/holdout_preds/E2LLC_2_F1_snv.tsv')
     parser.add_argument('--data', type=str, help='Path to the training dataset file', default='/Users/madsnielsen/Predisposed/data/datasets/E1LLC/processed_dataset_indel.tsv')
     parser.add_argument('--holdout', type=str, help='Path to the hold-out dataset file', default='/Users/madsnielsen/Predisposed/data/datasets/E2LHC/processed_dataset_indel.tsv')
     parser.add_argument('--vtype', type=str, help='Variant type to use for training: snv, indel, all', default='indel')
     parser.add_argument('--log', type=str, help='Path to the log file', default='train_model.log')
     parser.add_argument('--target_sensitivity', type=float, help='Sensitivity to optimise threshold for', default=99.99)
-    parser.add_argument('--save_model', type=str, help='Path to save models', default='/Users/madsnielsen/Predisposed/projects/filter_manuscript_repo/output/model_weights')
-
+    parser.add_argument('--save_models', type=str, help='Directory to save trained models', default='/Users/madsnielsen/Predisposed/projects/filter_manuscript_repo/output/model_weights')
 
     args = parser.parse_args()
     logging.basicConfig(filename=args.log, level=logging.INFO)
@@ -135,6 +159,13 @@ def main():
     holdout_path = Path(args.holdout)
     output_path = Path(args.output)
 
+    if args.save_models:
+        model_save_path = Path(args.save_models)
+        model_save_path.mkdir(exist_ok=True, parents=True)
+        logging.info(f"Models will be saved to {model_save_path}")
+    else:
+        model_save_path = None
+
     if args.vtype == 'snv':
         feature_subsets = feature_subsets_snv
     elif args.vtype == 'indel':
@@ -143,7 +174,7 @@ def main():
         feature_subsets = feature_subsets_all
     
     X, y, _, feature_subsets_np = extract_features(dataset_path, feature_subsets)
-    X_holdout, y_holdout, info_holdout, _ = extract_features(holdout_path, feature_subsets)  # Extract features from hold-out data
+    X_holdout, y_holdout, info_holdout, _ = extract_features(holdout_path, feature_subsets)
 
     model_configs = {
         'logistic_regression': {
@@ -172,9 +203,9 @@ def main():
         },
         'random_forest': {
             'params': {
-                'feature_subset': ['all','mrmr10','normal_loose'],
-                'n_estimators': [100,150,200],
-                'max_depth': [10, 12, 14, 16],
+                'feature_subset': ['all'],
+                'n_estimators': [100],
+                'max_depth': [12],
                 'min_samples_leaf': [1],
             },
             'init_params': {
@@ -208,13 +239,14 @@ def main():
                 **config['init_params']
             )
 
-            prediction_df = train_and_predict_holdout(X, y, X_holdout, y_holdout, model, info_holdout, target_sensitivity=target_sensitivity)
+            prediction_df = train_and_predict_holdout(
+                X, y, X_holdout, y_holdout, model, info_holdout, 
+                target_sensitivity=target_sensitivity,
+                model_save_path=model_save_path
+            )
             
-            # Save predictions with a different filename for each model
             output_path_model = output_path.with_name(f"{output_path.stem}_{model_name}{output_path.suffix}")
             prediction_df.to_csv(output_path_model, sep='\t', index=False)
-            if args.save_model is not None:
-                model.save(Path(args.save_model) / f'{model_name}_{args.vtype}.pkl')
     else:
         # Run for the specified model only
         if args.model:
@@ -226,10 +258,12 @@ def main():
                 random_state=random_seed,
                 **config['init_params']
             )
-            prediction_df = train_and_predict_holdout(X, y, X_holdout, y_holdout, model, info_holdout)
+            prediction_df = train_and_predict_holdout(
+                X, y, X_holdout, y_holdout, model, info_holdout,
+                target_sensitivity=target_sensitivity,
+                model_save_path=model_save_path
+            )
             prediction_df.to_csv(output_path, sep='\t', index=False)
-            if args.save_model is not None:
-                model.save(Path(args.save_model) / f'{model_name}_{args.vtype}.pkl')
         else:
             print("Please specify a model with --model or use --all_models to run all models.")
 
