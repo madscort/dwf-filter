@@ -23,8 +23,8 @@ def inner_cross_validation(X_train, y_train, model, inner_folds=5, random_seed=4
 
     # Inner loop for model selection
     for inner_train_index, inner_val_index in inner_cv.split(X_train):
-        X_inner_train, y_inner_train = X_train[inner_train_index], y_train[inner_train_index]
-        X_inner_val, y_inner_val = X_train[inner_val_index], y_train[inner_val_index]
+        X_inner_train, y_inner_train = X_train.iloc[inner_train_index], y_train[inner_train_index]
+        X_inner_val, y_inner_val = X_train.iloc[inner_val_index], y_train[inner_val_index]
         
         # Search for best hyperparameters
         current_model, current_parameter, current_score = model.search_hyperparameters(
@@ -67,8 +67,8 @@ def outer_cross_validation(X, y, model, outer_folds=5, inner_folds=5, random_sta
 
     # Iterate over each outer fold
     for fold_idx, (train_index, test_index) in enumerate(outer_cv.split(X)):
-        X_train, y_train = X[train_index], y[train_index]
-        X_test, y_test = X[test_index], y[test_index]
+        X_train, y_train = X.iloc[train_index], y[train_index]
+        X_test, y_test = X.iloc[test_index], y[test_index]
         info_test = None if info is None else info.iloc[test_index]
         
         # Use inner cross-validation for model selection

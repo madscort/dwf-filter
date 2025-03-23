@@ -284,7 +284,7 @@ def make_predictions(model, features_df: pd.DataFrame, threshold: float) -> Tupl
     
     # Extract features without metadata columns
     meta_columns = ['CHROM', 'POS', 'REF', 'ALT', 'IS_SNV']
-    X = features_df.drop(columns=meta_columns, errors='ignore').values
+    X = features_df.drop(columns=meta_columns, errors='ignore')
     
     # Get variant type-specific features if the model has this attribute
     feature_subset = None

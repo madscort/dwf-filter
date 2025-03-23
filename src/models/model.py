@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+from copy import deepcopy
+from itertools import product
 import xgboost as xgb
 from sklearn.preprocessing import PowerTransformer, StandardScaler
 from sklearn.linear_model import LogisticRegression
@@ -23,14 +25,14 @@ class ML_model:
         self.input_params = input_params
         self.random_state = random_state
         self.transformation = transformation
-        self.available_subsets = available_subsets  # Now expects dict of {subset_name: [feature_names]}
+        self.available_subsets = available_subsets
         self.class_weight = class_weight
-        self.optimal_threshold = 0.5  # F1-optimized threshold (default)
-        self.sensitivity_threshold = None  # Sensitivity-optimized threshold
-        self.target_sensitivity = None  # Target sensitivity value
+        self.optimal_threshold = 0.5
+        self.sensitivity_threshold = None
+        self.target_sensitivity = None
         self.scaler = None
         self.best_params = None
-        self.feature_names_ = None  # Store feature names used during training
+        self.feature_names_ = None
         
     def _ensure_dataframe(self, X):
         """Convert input to DataFrame if it's not already one"""
@@ -81,14 +83,11 @@ class ML_model:
                 
                 X = X[available_features]
     
-        # Store feature names during fitting
         if fit:
             self.feature_names_ = X.columns.tolist()
-        
-        # Convert to numpy for scaling (sklearn expects numpy arrays)
+
         X_array = X.values
-        
-        # Scaling
+
         if self.transformation:
             if fit:
                 if self.transformation == 'standard':
@@ -103,19 +102,16 @@ class ML_model:
                     raise ValueError("Scaler not fitted. Call fit() first.")
                 X_scaled = self.scaler.transform(X_array)
             
-            # Convert back to DataFrame with original column names
             return pd.DataFrame(X_scaled, columns=X.columns)
         
         return X
     
     def _compute_optimal_threshold(self, y_true, y_proba):
-        """Compute optimal classification threshold using PR curve (maximizes F1)"""
+        """Compute optimal classification threshold using PR curve"""
         precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
         # Add 0 to thresholds for edge case where all predictions are negative
         thresholds = np.append(thresholds, 1)
-        # Calculate F1 score for each threshold
         f1_scores = 2 * (precision * recall) / (precision + recall + 1e-7)
-        # Return threshold that maximizes F1 score
         return thresholds[np.argmax(f1_scores)]
     
     def _compute_sensitivity_threshold(self, y_true, y_proba, target_sensitivity):
@@ -124,7 +120,7 @@ class ML_model:
         # Find the threshold closest to target sensitivity
         valid_idx = np.where(tpr >= target_sensitivity)[0]
         if len(valid_idx) == 0:
-            return None  # Can't achieve target sensitivity
+            return None
         optimal_idx = valid_idx[np.argmin(np.abs(tpr[valid_idx] - target_sensitivity))]
         return thresholds[optimal_idx]
 
@@ -248,6 +244,32 @@ class ML_model:
         else:
             return self.model.predict_proba(X_processed.values)[:, 1]
     
+    def search_hyperparameters(self, X, y):
+        """Search for best hyperparameters"""
+        best_score = -np.inf
+        best_params = None
+        best_model = None
+
+        param_grid = [dict(zip(self.input_params.keys(), values)) 
+                     for values in product(*self.input_params.values())]
+
+        for params in param_grid:
+            self.fit(X, y, **params)
+            
+            # Use optimal threshold for evaluation
+            y_pred = self.predict(X, feature_subset=params.get('feature_subset'))
+            score = f1_score(y, y_pred)
+            
+            if score > best_score:
+                best_score = score
+                best_params = params
+                if self.model_type == 'gmm':
+                    best_model = (deepcopy(self.model), self.optimal_threshold)
+                else:
+                    best_model = deepcopy(self.model)
+
+        return best_model, best_params, best_score
+
     def get_available_thresholds(self):
         """Get information about available thresholds"""
         thresholds = {
@@ -263,12 +285,10 @@ class ML_model:
         return thresholds
     
     def get_feature_names(self):
-        """Get the feature names used by the model"""
         return self.feature_names_
             
     def save(self, filepath):
         """Save the model to disk"""
-        # Ensure directory exists
         os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
         joblib.dump(self, filepath)
         return filepath

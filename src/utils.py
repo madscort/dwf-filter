@@ -37,17 +37,13 @@ Variant = namedtuple(
 )
 S_idx = namedtuple("S_idx", ["AD", "DP", "GT"])
 
-# Define all feature subsets with explicit column names
-
-# Complete feature set - used for 'all' subset
 all_features = [
-    "AD_sample", "DP_site", "VAF", "dDP", "GQ_sample",
+    "AD_sample", "DP_site", "VAF", "GQ_sample",
     "ASSEMBLED_HAPS", "AS_BaseQRankSum", "AS_FS", "AS_MQ", "AS_MQRankSum",
     "AS_QD", "AS_ReadPosRankSum", "AS_SOR", "ClippingRankSum", "HAPCOMP", 
-    "HAPDOM", "HEC", "LikelihoodRankSum", "MLEAC", "MLEAF", "X_GCC", "X_HIL"
+    "HAPDOM", "HEC", "LikelihoodRankSum", "MLEAC", "MLEAF", "X_GCC", "X_HIL", "dDP"
 ]
 
-# Previous subsets
 broad = ["AS_FS", "AS_SOR", "AS_ReadPosRankSum", "AS_MQRankSum", "AS_QD", "AS_MQ"]
 
 normal_loose = [
@@ -125,6 +121,7 @@ def extract_features(dataset_path: Path, feature_subsets, skip_info: bool=True):
                          'is_lof', 'is_p', 'is_lofp', 'is_acmg', 'is_snv']
 
     feature_cols = [col for col in dataset.columns if col not in non_feature_cols]
+    
     X = dataset[feature_cols]
 
     y = dataset['label'].values
