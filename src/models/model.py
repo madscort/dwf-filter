@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from copy import deepcopy
 from itertools import product
 import xgboost as xgb
 from sklearn.preprocessing import PowerTransformer, StandardScaler
@@ -38,28 +37,15 @@ class ML_model:
         """
         Preprocess data with feature selection and scaling.
         """
+        selected_features = self.available_subsets.get(subset, self.available_subsets.get('all', X.columns))
 
-        if subset is not None:
-            if subset not in self.available_subsets:
-                raise ValueError(f"Unknown feature subset: {subset}. Available subsets: {list(self.available_subsets.keys())}")
-            
-            selected_features = self.available_subsets[subset]
-            
-            # Check for missing required features
-            missing_features = [f for f in selected_features if f not in X.columns]
-            if missing_features:
-                raise ValueError(f"Missing required features for subset '{subset}': {missing_features}")
-            X = X[selected_features]
-        else:
-            # Default to using all features
-            if 'all' in self.available_subsets:
-                selected_features = self.available_subsets['all']
-                available_features = [f for f in selected_features if f in X.columns]
-                missing_features = [f for f in selected_features if f not in X.columns]
-                if missing_features:
-                    raise ValueError(f"Missing required features in input data, as defined by '{subset}' subset: {missing_features}")
-                X = X[available_features]
-    
+        # Ensure features - report missing.
+        missing_features = [f for f in selected_features if f not in X.columns]
+        if missing_features:
+            raise ValueError(f"Missing required features for subset '{subset or 'all'}': {missing_features}")
+
+        X = X[selected_features]
+
         if fit:
             self.feature_names_ = X.columns.tolist()
 
@@ -67,27 +53,19 @@ class ML_model:
 
         if self.transformation:
             if fit:
-                if self.transformation == 'standard':
-                    self.scaler = StandardScaler()
-                elif self.transformation == 'yeo-johnson':
-                    self.scaler = PowerTransformer(method='yeo-johnson')
-                else:
-                    raise ValueError("Transformation must be 'standard' or 'yeo-johnson'")
+                self.scaler = StandardScaler() if self.transformation == 'standard' else PowerTransformer(method='yeo-johnson')
                 X_scaled = self.scaler.fit_transform(X_array)
             else:
                 if self.scaler is None:
                     raise ValueError("Scaler not fitted. Call fit() first.")
                 X_scaled = self.scaler.transform(X_array)
-            
+
             return pd.DataFrame(X_scaled, columns=X.columns)
-        
         return X
     
     def _compute_optimal_threshold(self, y_true, y_proba):
-        """Compute optimal classification threshold using PR curve"""
+        """Compute optimal classification threshold using PR curve."""
         precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
-        # Add 0 to thresholds for edge case where all predictions are negative
-        thresholds = np.append(thresholds, 1)
         f1_scores = 2 * (precision * recall) / (precision + recall + 1e-7)
         return thresholds[np.argmax(f1_scores)]
     
@@ -101,10 +79,10 @@ class ML_model:
         optimal_idx = valid_idx[np.argmin(np.abs(tpr[valid_idx] - target_sensitivity))]
         return thresholds[optimal_idx]
 
-    def set_sensitivity_threshold(self, X, y, target_sensitivity):
-        """Set threshold to achieve target sensitivity on provided training data"""
+    def set_sensitivity_threshold(self, X, y, target_sensitivity, feature_subset=None):
+        """Set threshold to achieve target sensitivity."""
         self.target_sensitivity = target_sensitivity
-        y_proba = self.predict_proba(X, self.best_params.get('feature_subset', None))
+        y_proba = self.predict_proba(X, feature_subset)
         self.sensitivity_threshold = self._compute_sensitivity_threshold(y, y_proba, target_sensitivity)
         return self.sensitivity_threshold
 
@@ -112,8 +90,6 @@ class ML_model:
         """Fit model with preprocessing and class weights"""
 
         self.best_params = params
-        
-        # Preprocess features
         X_processed = self._preprocess(X, params.get('feature_subset'), fit=True)
         
         # Initialize model with appropriate parameters
@@ -221,28 +197,25 @@ class ML_model:
             return self.model.predict_proba(X_processed.values)[:, 1]
     
     def search_hyperparameters(self, X, y):
-        """Search for best hyperparameters"""
+        """Search for best hyperparameters."""
         best_score = -np.inf
         best_params = None
         best_model = None
 
         param_grid = [dict(zip(self.input_params.keys(), values)) 
-                     for values in product(*self.input_params.values())]
+                    for values in product(*self.input_params.values())]
 
         for params in param_grid:
             self.fit(X, y, **params)
-            
+
             # Use optimal threshold for evaluation
             y_pred = self.predict(X, feature_subset=params.get('feature_subset'))
             score = f1_score(y, y_pred)
-            
+
             if score > best_score:
                 best_score = score
                 best_params = params
-                if self.model_type == 'gmm':
-                    best_model = (deepcopy(self.model), self.optimal_threshold)
-                else:
-                    best_model = deepcopy(self.model)
+                best_model = (self.model, self.optimal_threshold) if self.model_type == 'gmm' else self.model
 
         return best_model, best_params, best_score
 
