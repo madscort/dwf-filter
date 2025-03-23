@@ -7,7 +7,7 @@ from sklearn.preprocessing import PowerTransformer, StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.mixture import GaussianMixture
-from sklearn.metrics import f1_score, precision_recall_curve, recall_score, roc_curve
+from sklearn.metrics import f1_score, precision_recall_curve, roc_curve
 import joblib
 import os
 
@@ -33,27 +33,12 @@ class ML_model:
         self.scaler = None
         self.best_params = None
         self.feature_names_ = None
-        
-    def _ensure_dataframe(self, X):
-        """Convert input to DataFrame if it's not already one"""
-        if isinstance(X, np.ndarray):
-            if self.feature_names_ is not None:
-                # If we know the feature names, use them
-                return pd.DataFrame(X, columns=self.feature_names_)
-            else:
-                # Otherwise use generic column names
-                return pd.DataFrame(X, columns=[f'feature_{i}' for i in range(X.shape[1])])
-        return X  # Already a DataFrame
     
     def _preprocess(self, X, subset=None, fit=False):
         """
-        Preprocess data with feature selection and scaling using named features.
-        Always uses explicitly defined feature subsets.
+        Preprocess data with feature selection and scaling.
         """
-        # Convert to DataFrame if needed
-        X = self._ensure_dataframe(X)
-        
-        # Feature selection by name - always use a named subset
+
         if subset is not None:
             if subset not in self.available_subsets:
                 raise ValueError(f"Unknown feature subset: {subset}. Available subsets: {list(self.available_subsets.keys())}")
@@ -64,23 +49,15 @@ class ML_model:
             missing_features = [f for f in selected_features if f not in X.columns]
             if missing_features:
                 raise ValueError(f"Missing required features for subset '{subset}': {missing_features}")
-            
-            # Select only the features in the subset
             X = X[selected_features]
         else:
-            # Default to 'all' subset if none specified
+            # Default to using all features
             if 'all' in self.available_subsets:
                 selected_features = self.available_subsets['all']
-                
-                # Filter to include only available features from the 'all' subset
                 available_features = [f for f in selected_features if f in X.columns]
-                
-                # Warn about missing features
                 missing_features = [f for f in selected_features if f not in X.columns]
                 if missing_features:
-                    import warnings
-                    warnings.warn(f"Missing features from 'all' subset: {missing_features}")
-                
+                    raise ValueError(f"Missing required features in input data, as defined by '{subset}' subset: {missing_features}")
                 X = X[available_features]
     
         if fit:
@@ -125,7 +102,7 @@ class ML_model:
         return thresholds[optimal_idx]
 
     def set_sensitivity_threshold(self, X, y, target_sensitivity):
-        """Set threshold to achieve target sensitivity on provided data"""
+        """Set threshold to achieve target sensitivity on provided training data"""
         self.target_sensitivity = target_sensitivity
         y_proba = self.predict_proba(X, self.best_params.get('feature_subset', None))
         self.sensitivity_threshold = self._compute_sensitivity_threshold(y, y_proba, target_sensitivity)
@@ -133,7 +110,7 @@ class ML_model:
 
     def fit(self, X, y, **params):
         """Fit model with preprocessing and class weights"""
-        # Store the parameters for later use
+
         self.best_params = params
         
         # Preprocess features
@@ -194,8 +171,7 @@ class ML_model:
             scores = self.model.score_samples(X_processed.values)
             self.optimal_threshold = self._compute_optimal_threshold(y, scores)
             return self
-            
-        # Fit model (sklearn models expect numpy arrays)
+
         self.model.fit(X_processed.values, y)
         
         # Compute optimal threshold for classification (except GMM)
@@ -236,7 +212,7 @@ class ML_model:
             return (proba >= final_threshold).astype(int)
 
     def predict_proba(self, X, feature_subset=None):
-        """Predict probabilities or scores"""
+        """Get prediction probabilities"""
         X_processed = self._preprocess(X, feature_subset)
         
         if self.model_type == 'gmm':

@@ -10,6 +10,59 @@ from utils import feature_subsets_snv, feature_subsets_indel, feature_subsets_al
 from sklearn.model_selection import KFold
 from models.model import ML_model
 
+## mads - 2025-03-23
+# Script for retraining model on narrow set of hyperparameters
+# and perform the last and final prediction on held-out dataset.
+
+model_configs = {
+        'logistic_regression': {
+            'params': {
+                'feature_subset': ['all'],
+                'C': [0.1, 1, 1.3, 1.5, 2, 10, 50],
+                'max_iter': [10000],
+                'penalty': ['l1', 'elasticnet', 'l2']
+            },
+            'init_params': {
+                'class_weight': 'balanced',
+                'transformation': 'standard'
+            }
+        },
+        'xgboost': {
+            'params': {
+                'feature_subset': ['all'],
+                'max_depth': [3, 5, 7],
+                'learning_rate': [0.1, 0.2, 0.3],
+                'colsample_bytree': [0.65, 0.7, 0.8, 0.9]
+            },
+            'init_params': {
+                'class_weight': 'balanced',
+                'transformation': 'standard'
+            }
+        },
+        'random_forest': {
+            'params': {
+                'feature_subset': ['all'],
+                'n_estimators': [100],
+                'max_depth': [12],
+                'min_samples_leaf': [1],
+            },
+            'init_params': {
+                'class_weight': 'balanced',
+                'transformation': 'standard'
+            }
+        },
+        'gmm': {
+            'params': {
+                'feature_subset': ['all'],
+                'n_components': [3, 4, 5],
+                'covariance_type': ['full']
+            },
+            'init_params': {
+                'transformation': 'standard'
+            }
+        }
+    }
+
 def find_sensitivity_threshold(y_true, y_proba, target_sensitivity):
     """Find threshold that achieves target sensitivity on training data"""
     fpr, tpr, thresholds = roc_curve(y_true, y_proba)
@@ -21,12 +74,11 @@ def find_sensitivity_threshold(y_true, y_proba, target_sensitivity):
     return thresholds[optimal_idx]
 
 def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, info_holdout=None, 
-                            repetition=1, target_sensitivity=None, model_save_path=None,
-                            variant_type='indel'):
+                            repetition=1, target_sensitivity=None, model_save_path=None):
     """
     Train model using 5-fold CV for parameter selection, then predict on holdout set.
-    Optionally adjust threshold to achieve target sensitivity.
-    Optionally save the trained model to disk.
+    Adjust threshold to achieve target sensitivity on training set.
+    Save the trained model to disk.
     
     Returns DataFrame with predictions and model evaluation metrics.
     """
@@ -115,7 +167,7 @@ def train_and_predict_holdout(X_train, y_train, X_holdout, y_holdout, model, inf
         y_pred = y_pred_orig
 
     if model_save_path:
-        model_save_path = Path(model_save_path) / f"{model.model_type}_{variant_type}_model.joblib"
+        model_save_path = Path(model_save_path) / f"{model.model_type}_model.joblib"
         model.save(model_save_path)
         logging.info(f"Model saved to {model_save_path}")
         logging.info(f"Model feature names: {model.feature_names_}")
@@ -152,9 +204,9 @@ def main():
                         help='Model type to use for training: logistic_regression, xgboost, random_forest, gmm')
     parser.add_argument('--all_models', action='store_true', help='Run the script for all models sequentially', default=True)
     parser.add_argument('--output', type=str, help='Path to save the output predictions file', default='/Users/madsnielsen/Predisposed/projects/filter_manuscript_repo/output/holdout_preds/E2LLC_2_F1_snv.tsv')
-    parser.add_argument('--data', type=str, help='Path to the training dataset file', default='/Users/madsnielsen/Predisposed/data/datasets/E1LLC/processed_dataset_indel.tsv')
-    parser.add_argument('--holdout', type=str, help='Path to the hold-out dataset file', default='/Users/madsnielsen/Predisposed/data/datasets/E2LHC/processed_dataset_indel.tsv')
-    parser.add_argument('--vtype', type=str, help='Variant type to use for training: snv, indel, all', default='indel')
+    parser.add_argument('--data', type=str, help='Path to the training dataset file', default='/Users/madsnielsen/Predisposed/data/datasets/E1LLC/processed_dataset_snv.tsv')
+    parser.add_argument('--holdout', type=str, help='Path to the hold-out dataset file', default='/Users/madsnielsen/Predisposed/data/datasets/E2LHC/processed_dataset_snv.tsv')
+    parser.add_argument('--vtype', type=str, help='Variant type to use for training: snv, indel, all', default='snv')
     parser.add_argument('--log', type=str, help='Path to the log file', default='train_model.log')
     parser.add_argument('--target_sensitivity', type=float, help='Sensitivity to optimise threshold for', default=99.99)
     parser.add_argument('--save_models', type=str, help='Directory to save trained models', default='/Users/madsnielsen/Predisposed/projects/filter_manuscript_repo/output/model_weights')
@@ -168,7 +220,7 @@ def main():
     output_path = Path(args.output)
 
     if args.save_models:
-        model_save_path = Path(args.save_models)
+        model_save_path = Path(args.save_models) / args.vtype
         model_save_path.mkdir(exist_ok=True, parents=True)
         logging.info(f"Models will be saved to {model_save_path}")
     else:
@@ -184,56 +236,6 @@ def main():
     X, y, _, feature_subsets_np = extract_features(dataset_path, feature_subsets)
     X_holdout, y_holdout, info_holdout, _ = extract_features(holdout_path, feature_subsets)
 
-    model_configs = {
-        'logistic_regression': {
-            'params': {
-                'feature_subset': ['all'],
-                'C': [0.1, 1, 1.3, 1.5, 2, 10, 50],
-                'max_iter': [10000],
-                'penalty': ['l1', 'elasticnet', 'l2']
-            },
-            'init_params': {
-                'class_weight': 'balanced',
-                'transformation': 'standard'
-            }
-        },
-        'xgboost': {
-            'params': {
-                'feature_subset': ['all'],
-                'max_depth': [3, 5, 7],
-                'learning_rate': [0.1, 0.2, 0.3],
-                'colsample_bytree': [0.65, 0.7, 0.8, 0.9]
-            },
-            'init_params': {
-                'class_weight': 'balanced',
-                'transformation': 'standard'
-            }
-        },
-        'random_forest': {
-            'params': {
-                'feature_subset': ['all'],
-                'n_estimators': [100],
-                'max_depth': [12],
-                'min_samples_leaf': [1],
-            },
-            'init_params': {
-                'class_weight': 'balanced',
-                'transformation': 'standard'
-            }
-        },
-        'gmm': {
-            'params': {
-                'feature_subset': ['all'],
-                'n_components': [3, 4, 5],
-                'covariance_type': ['full']
-            },
-            'init_params': {
-                'transformation': 'standard'
-            }
-        }
-    }
-
-    # Run for all models if --all_models is set
     if args.all_models:
         for model_name, config in model_configs.items():
             logging.info(f"Training {model_name}")
@@ -256,7 +258,6 @@ def main():
             output_path_model = output_path.with_name(f"{output_path.stem}_{model_name}{output_path.suffix}")
             prediction_df.to_csv(output_path_model, sep='\t', index=False)
     else:
-        # Run for the specified model only
         if args.model:
             config = model_configs[args.model]
             model = ML_model(

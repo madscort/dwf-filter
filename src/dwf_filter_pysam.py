@@ -19,7 +19,6 @@ import pysam
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional, Set
 
-# Define annotation lists based on your existing code
 INCLUDE_ANNOTATIONS = [
     "ASSEMBLED_HAPS","AS_BaseQRankSum","AS_FS","AS_MQ","AS_MQRankSum",
     "AS_QD","AS_ReadPosRankSum","AS_SOR","ClippingRankSum","HAPCOMP","HAPDOM",
@@ -301,11 +300,7 @@ def make_predictions(model, features_df: pd.DataFrame, threshold: float) -> Tupl
             probabilities = probabilities[:, 1]
     except Exception as e:
         logging.error(f"Error during probability prediction: {e}")
-        # Fallback to basic predict if predict_proba fails
-        predictions = model.predict(X, feature_subset=feature_subset)
-        probabilities = predictions.astype(float)
-    
-    # Convert to binary predictions based on threshold
+
     predictions = (probabilities >= threshold).astype(int)
     
     return probabilities, predictions
