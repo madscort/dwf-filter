@@ -53,7 +53,7 @@ def extract_variant_info(vcf_files: List[str]) -> Tuple[List[Dict[str, Any]], Li
     
     Returns:
         variants_data: List of dictionaries with variant data
-        variant_ids: List of variant IDs in the format "CHROM:POS:REF:ALT"
+        variant_ids: List of variant IDs in the format "SOURCE:CHROM:POS:REF:ALT"
         vcf_sources: List of source VCF files for each variant
     """
     logging.info(f"First pass: Extracting variant information from {len(vcf_files)} VCF file(s)")
@@ -66,7 +66,7 @@ def extract_variant_info(vcf_files: List[str]) -> Tuple[List[Dict[str, Any]], Li
         
         try:
             vcf_reader = pysam.VariantFile(vcf_file)
-            sample_name = list(vcf_reader.header.samples)[0]  # Get the name of the sample
+            sample_name = list(vcf_reader.header.samples)[0]
             
             for record in vcf_reader:
                 # Skip spanning deletions
@@ -77,9 +77,9 @@ def extract_variant_info(vcf_files: List[str]) -> Tuple[List[Dict[str, Any]], Li
                 pos = record.pos
                 ref = record.ref
                 alt = record.alts[0]
-                
-                # Create a unique variant ID
-                variant_id = f"{chrom}:{pos}:{ref}:{alt}"
+
+                source_id = Path(vcf_file).name
+                variant_id = f"{source_id}:{chrom}:{pos}:{ref}:{alt}"
                 variant_ids.append(variant_id)
                 vcf_sources.append(vcf_file)
                 
@@ -89,10 +89,20 @@ def extract_variant_info(vcf_files: List[str]) -> Tuple[List[Dict[str, Any]], Li
                 annotations = {}
                 for annot in INCLUDE_ANNOTATIONS:
                     if annot in record.info:
-                        annotations[annot] = record.info.get(annot)
+                        value = record.info.get(annot)
+                        if isinstance(value, tuple) and len(value) > 0:
+                            value = value[0]
+                        try:
+                            float_value = float(value)
+                            if np.isnan(float_value):
+                                annotations[annot] = None
+                            else:
+                                annotations[annot] = float_value
+                        except (ValueError, TypeError):
+                            annotations[annot] = None
                     else:
-                        annotations[annot] = 'NA'
-                
+                        annotations[annot] = None
+
                 sample = record.samples[sample_name]
 
                 ad = sample.get('AD', None)
@@ -107,8 +117,8 @@ def extract_variant_info(vcf_files: List[str]) -> Tuple[List[Dict[str, Any]], Li
                 gq = sample.get('GQ', 0)
                 dp_site = record.info.get('DP', 0)
                 
-                # Combine all information
                 variant_data = {
+                    'SOURCE': source_id,
                     'CHROM': chrom,
                     'POS': pos,
                     'REF': ref,
@@ -149,20 +159,15 @@ def impute_missing_values(variants_data: List[Dict[str, Any]]) -> Dict[str, floa
     
     for variant in variants_data:
         for annot in IMPUTE_ANNOT:
-            val = variant.get(annot, 'NA')
-            if val not in ('NA', '.', '', 'nan', None):
-                try:
-                    num_val = float(val)
-                    sums[annot] += num_val
-                    counts[annot] += 1
-                except (ValueError, TypeError):
-                    pass
+            val = variant.get(annot)
+            if val is not None:
+                sums[annot] += val
+                counts[annot] += 1
     
     means = {}
     for annot in IMPUTE_ANNOT:
         means[annot] = sums[annot] / counts[annot] if counts[annot] > 0 else 0.0
         logging.debug(f"Mean value for {annot}: {means[annot]}")
-    
     return means
 
 def prepare_features(variants_data: List[Dict[str, Any]], means: Dict[str, float]) -> pd.DataFrame:
@@ -204,20 +209,18 @@ def prepare_features(variants_data: List[Dict[str, Any]], means: Dict[str, float
         }
 
         for annot in INCLUDE_ANNOTATIONS:
-            value = variant.get(annot, 'NA')
-            if annot in IMPUTE_ANNOT and value in ('NA', '.', '', 'nan', None):
+            value = variant.get(annot)
+            if value is None and annot in IMPUTE_ANNOT:
                 feature_row[annot] = means[annot]
             else:
-                try:
-                    feature_row[annot] = float(value) if value not in ('NA', '.', '', 'nan', None) else 0.0
-                except (ValueError, TypeError):
-                    feature_row[annot] = 0.0
-        
+                feature_row[annot] = 0.0 if value is None else value
+    
         feature_rows.append(feature_row)
     
     features_df = pd.DataFrame(feature_rows)
 
     for i, variant in enumerate(variants_data):
+        features_df.loc[i, 'SOURCE'] = variant['SOURCE']
         features_df.loc[i, 'CHROM'] = variant['CHROM']
         features_df.loc[i, 'POS'] = variant['POS']
         features_df.loc[i, 'REF'] = variant['REF']
@@ -263,7 +266,7 @@ def make_predictions(model, features_df: pd.DataFrame, threshold: float) -> Tupl
     logging.info("Making predictions")
     
     # Remove metadata columns
-    meta_columns = ['CHROM', 'POS', 'REF', 'ALT', 'IS_SNV']
+    meta_columns = ['SOURCE', 'CHROM', 'POS', 'REF', 'ALT', 'IS_SNV']
     X = features_df.drop(columns=meta_columns, errors='ignore')
 
     feature_subset = None
@@ -315,33 +318,27 @@ def annotate_vcf(input_vcf: str, output_vcf: str, variant_lookup: Dict[str, Dict
     annotated_count = 0
     filtered_count = 0
     
+    source_id = Path(input_vcf).name
+    
     for record in vcf_in:
         variant_count += 1
-        
-        # Get variant ID
-        variant_id = f"{record.chrom}:{record.pos}:{record.ref}:{record.alts[0]}"
-        
-        # Check if we have a prediction for this variant
+        variant_id = f"{source_id}:{record.chrom}:{record.pos}:{record.ref}:{record.alts[0]}"
+
         if variant_id in variant_lookup:
             annotated_count += 1
             pred_info = variant_lookup[variant_id]
             prob = pred_info['probability']
             pred = pred_info['prediction']
-            
-            # Add INFO fields
             record.info['ML_PROB'] = prob
             record.info['ML_PREDICTION'] = int(pred)
             
             # Update FILTER field if prediction is false positive
             if pred == 0:
                 filtered_count += 1
-                # Clear existing filters
                 if 'PASS' in record.filter:
                     record.filter.clear()
-                # Add ML_FILTERED
                 record.filter.add('ML_FILTERED')
             elif len(record.filter) == 0 or 'PASS' in record.filter:
-                # Set to PASS by clearing filters
                 record.filter.clear()
         vcf_out.write(record)
     vcf_in.close()
@@ -408,24 +405,18 @@ def main():
                 'threshold': indel_threshold
             }
 
-    # Create mapping of VCF files to keep track of variants
-    vcf_variants = {}
-    for i, vcf_file in enumerate(vcf_sources):
-        if vcf_file not in vcf_variants:
-            vcf_variants[vcf_file] = []
-        vcf_variants[vcf_file].append(variant_ids[i])
-
-    # Annotate annotate each VCF file and create output
     for vcf_file in args.input:
-
         vcf_name = Path(vcf_file).name
         output_vcf = output_dir / vcf_name
         
-        # Lookup variants
-        file_variant_ids = vcf_variants.get(vcf_file, [])
-        file_predictions = {vid: predictions_lookup[vid] for vid in file_variant_ids if vid in predictions_lookup}
+        file_variant_prefix = f"{vcf_name}:"
+        file_predictions = {
+            vid: predictions_lookup[vid] 
+            for vid in predictions_lookup 
+            if vid.startswith(file_variant_prefix)
+        }
+        
         threshold = f'{snv_threshold:.2f}/{indel_threshold:.2f}'
-
         annotate_vcf(vcf_file, str(output_vcf), file_predictions, threshold)
     
     logging.info("VCF annotation complete")
