@@ -189,27 +189,22 @@ def prepare_features(variants_data: List[Dict[str, Any]], means: Dict[str, float
     """
     logging.info("Preparing features for ML models")
     
-    # Create feature rows
     feature_rows = []
     
     for variant in variants_data:
-        # Calculate allele ratio
         try:
             ad_alt = float(variant['AD_ALT'])
             dp_site = float(variant['DP_SITE'])
             allele_ratio = round(ad_alt / dp_site, 6) if dp_site > 0 else 0
         except (ValueError, ZeroDivisionError):
             allele_ratio = 0
-        
-        # Calculate unused base reads
         try:
             dp_site = float(variant['DP_SITE'])
             dp_sample = float(variant['DP_SAMPLE'])
             unused_bases = int(dp_site) - int(dp_sample)
         except (ValueError, TypeError):
             unused_bases = 0
-        
-        # Prepare feature row
+
         feature_row = {
             'AD_sample': variant['AD_ALT'],
             'DP_site': variant['DP_SITE'],
@@ -218,8 +213,7 @@ def prepare_features(variants_data: List[Dict[str, Any]], means: Dict[str, float
             'GQ_sample': variant['GQ'],
             'IS_SNV': variant['IS_SNV']
         }
-        
-        # Add all annotation features with imputation
+
         for annot in INCLUDE_ANNOTATIONS:
             value = variant.get(annot, 'NA')
             if annot in IMPUTE_ANNOT and value in ('NA', '.', '', 'nan', None):
@@ -232,10 +226,8 @@ def prepare_features(variants_data: List[Dict[str, Any]], means: Dict[str, float
         
         feature_rows.append(feature_row)
     
-    # Convert to DataFrame
     features_df = pd.DataFrame(feature_rows)
-    
-    # Add variant info for reference
+
     for i, variant in enumerate(variants_data):
         features_df.loc[i, 'CHROM'] = variant['CHROM']
         features_df.loc[i, 'POS'] = variant['POS']
@@ -281,18 +273,16 @@ def make_predictions(model, features_df: pd.DataFrame, threshold: float) -> Tupl
     """
     logging.info("Making predictions")
     
-    # Extract features without metadata columns
+    # Remove metadata columns
     meta_columns = ['CHROM', 'POS', 'REF', 'ALT', 'IS_SNV']
     X = features_df.drop(columns=meta_columns, errors='ignore')
-    
-    # Get variant type-specific features if the model has this attribute
+
     feature_subset = None
     if hasattr(model, 'best_params') and isinstance(model.best_params, dict):
         feature_subset = model.best_params.get('feature_subset', None)
     
     # Generate probabilities
     try:
-        # Use the predict_proba method from our custom ML_model class
         probabilities = model.predict_proba(X, feature_subset=feature_subset)
         
         # Make sure we get a 1D array of probabilities
@@ -300,6 +290,7 @@ def make_predictions(model, features_df: pd.DataFrame, threshold: float) -> Tupl
             probabilities = probabilities[:, 1]
     except Exception as e:
         logging.error(f"Error during probability prediction: {e}")
+        sys.exit(1)
 
     predictions = (probabilities >= threshold).astype(int)
     
@@ -409,16 +400,12 @@ def main():
     
     # First pass: Extract variant information from all VCF files
     variants_data, variant_ids, vcf_sources = extract_variant_info(args.input)
-    print(variants_data[0])
-    print(variant_ids[0])
-    print(vcf_sources[0])
 
     # Calculate means for imputation (using all variants for consistent imputation)
     means = impute_missing_values(variants_data)
 
     # Prepare features for all variants
     features_df = prepare_features(variants_data, means)
-    print(features_df)
 
     # Split variants into SNVs and indels
     snv_mask = features_df['IS_SNV'] == 1
