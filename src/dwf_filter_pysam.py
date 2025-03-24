@@ -2,11 +2,9 @@
 """
 VCF ML Annotation Pipeline
 --------------------------
-This script reads multiple VCF files, extracts necessary features, applies normalization and imputation,
+This script reads multiple VCF files, extracts necessary features, applies normalization,
 runs predictions through separate ML models for SNVs and indels, and annotates the VCFs with
 prediction probabilities and filter status.
-
-Uses pysam for VCF processing and supports the custom ML_model class for predictions.
 """
 
 import argparse
@@ -17,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pysam
 from pathlib import Path
-from typing import Dict, List, Tuple, Any, Optional, Set
+from typing import Dict, List, Tuple, Any, Optional
 
 INCLUDE_ANNOTATIONS = [
     "ASSEMBLED_HAPS","AS_BaseQRankSum","AS_FS","AS_MQ","AS_MQRankSum",
@@ -32,7 +30,7 @@ IMPUTE_ANNOT = ["AS_MQ", "ClippingRankSum", "HAPCOMP", "HAPDOM",
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Annotate VCF with ML-based variant classification")
-    parser.add_argument("--input", "-i", required=False, nargs='+', help="Input VCF file(s)", default='input/vcf/E2_2_8_S18.GATKGVCF.vcf input/vcf/E2_2_4_S14.GATKGVCF.vcf')
+    parser.add_argument("--input", "-i", required=False, nargs='+', help="Input VCF file(s)", default=['input/vcf/E2_2_8_S18.GATKGVCF.vcf','input/vcf/E2_2_4_S14.GATKGVCF.vcf'])
     parser.add_argument("--output-dir", "-o", required=False, help="Output directory for annotated VCFs",default='output/pred_vcfs')
     parser.add_argument("--snv-model", "-sm", required=False, help="Path to trained ML model for SNVs", default='input/model/logistic_regression_snv_model.joblib')
     parser.add_argument("--indel-model", "-im", required=False, help="Path to trained ML model for indels", default='input/model/random_forest_indel_model.joblib')
@@ -40,7 +38,7 @@ def parse_args():
                         help="Custom probability threshold for SNVs (default: use model's threshold)")
     parser.add_argument("--indel-threshold", "-it", type=float, default=None, 
                         help="Custom probability threshold for indels (default: use model's threshold)")
-    parser.add_argument("--threshold-type", "-tt", choices=['f1', 'sensitivity', 'custom'], default='f1',
+    parser.add_argument("--threshold-type", "-tt", choices=['f1', 'sensitivity', 'custom'], default='sensitivity',
                         help="Type of threshold to use (f1, sensitivity, or custom)")
     parser.add_argument("--tmp-dir", "-td", type=str, default=None,
                         help="Temporary directory for intermediate files")
@@ -75,7 +73,6 @@ def extract_variant_info(vcf_files: List[str]) -> Tuple[List[Dict[str, Any]], Li
                 if '*' in record.alts or record.ref == '*':
                     continue
                 
-                # Basic variant information - we can assume only one ALT allele since multi-allelic sites are pre-split
                 chrom = record.chrom
                 pos = record.pos
                 ref = record.ref
@@ -86,7 +83,6 @@ def extract_variant_info(vcf_files: List[str]) -> Tuple[List[Dict[str, Any]], Li
                 variant_ids.append(variant_id)
                 vcf_sources.append(vcf_file)
                 
-                # Determine if variant is SNV
                 is_snv = 1 if len(alt) == 1 and len(ref) == 1 else 0
                 
                 # Extract required annotations
@@ -97,10 +93,8 @@ def extract_variant_info(vcf_files: List[str]) -> Tuple[List[Dict[str, Any]], Li
                     else:
                         annotations[annot] = 'NA'
                 
-                # Get sample-specific information
                 sample = record.samples[sample_name]
-                
-                # Extract AD (Allelic Depth)
+
                 ad = sample.get('AD', None)
                 if ad and len(ad) > 1:
                     ad_ref = ad[0]
@@ -108,14 +102,9 @@ def extract_variant_info(vcf_files: List[str]) -> Tuple[List[Dict[str, Any]], Li
                 else:
                     ad_ref = 0
                     ad_alt = 0
-                    
-                # Extract DP (Read Depth)
+
                 dp_sample = sample.get('DP', 0)
-                
-                # Extract GQ (Genotype Quality)
                 gq = sample.get('GQ', 0)
-                
-                # Site depth from INFO field
                 dp_site = record.info.get('DP', 0)
                 
                 # Combine all information
@@ -146,15 +135,15 @@ def extract_variant_info(vcf_files: List[str]) -> Tuple[List[Dict[str, Any]], Li
 
 def impute_missing_values(variants_data: List[Dict[str, Any]]) -> Dict[str, float]:
     """
-    Calculate means for specified annotations across all variants for imputation
+    Calculate means for specified annotations across all variants
     
     Args:
         variants_data: List of dictionaries with variant data
         
     Returns:
-        Dictionary of mean values for imputation
+        Dictionary of mean values
     """
-    logging.info("Calculating mean values for imputation across all input files")
+    logging.info("Calculating mean values across all input files")
     sums = {a: 0.0 for a in IMPUTE_ANNOT}
     counts = {a: 0 for a in IMPUTE_ANNOT}
     
@@ -178,11 +167,11 @@ def impute_missing_values(variants_data: List[Dict[str, Any]]) -> Dict[str, floa
 
 def prepare_features(variants_data: List[Dict[str, Any]], means: Dict[str, float]) -> pd.DataFrame:
     """
-    Prepare features for ML models with proper formatting and imputation
+    Prepare features for ML models with correct formatting
     
     Args:
         variants_data: List of dictionaries with variant data
-        means: Dictionary of mean values for imputation
+        means: Dictionary of mean values
         
     Returns:
         DataFrame with prepared features
@@ -284,10 +273,6 @@ def make_predictions(model, features_df: pd.DataFrame, threshold: float) -> Tupl
     # Generate probabilities
     try:
         probabilities = model.predict_proba(X, feature_subset=feature_subset)
-        
-        # Make sure we get a 1D array of probabilities
-        if isinstance(probabilities, np.ndarray) and probabilities.ndim == 2:
-            probabilities = probabilities[:, 1]
     except Exception as e:
         logging.error(f"Error during probability prediction: {e}")
         sys.exit(1)
@@ -300,28 +285,23 @@ def annotate_vcf(input_vcf: str, output_vcf: str, variant_lookup: Dict[str, Dict
     """Annotate a single VCF with predictions and write to output VCF"""
     logging.info(f"Annotating VCF: {input_vcf} -> {output_vcf}")
     
-    # Open input VCF
+    # Use original VCF as draft
     vcf_in = pysam.VariantFile(input_vcf)
-    
-    # Add new header entries
     header = vcf_in.header
     
-    # Add INFO fields
+    # Filtering header info
     header.add_meta('INFO', items=[
         ('ID', 'ML_PROB'),
         ('Number', 1),
         ('Type', 'Float'),
         ('Description', 'Machine learning model probability of true positive')
     ])
-    
     header.add_meta('INFO', items=[
         ('ID', 'ML_PREDICTION'),
         ('Number', 1),
         ('Type', 'Integer'),
         ('Description', 'Machine learning prediction (1=true positive, 0=false positive)')
     ])
-    
-    # Add FILTER field
     header.add_meta('FILTER', items=[
         ('ID', 'ML_FILTERED'),
         ('Description', f'Filtered by ML model (probability < {threshold})')
@@ -350,12 +330,7 @@ def annotate_vcf(input_vcf: str, output_vcf: str, variant_lookup: Dict[str, Dict
             
             # Add INFO fields
             record.info['ML_PROB'] = prob
-            try:
-                record.info['ML_PREDICTION'] = int(pred)
-            except TypeError:
-                print(type(pred))
-                print(pred)
-                sys.exit()
+            record.info['ML_PREDICTION'] = int(pred)
             
             # Update FILTER field if prediction is false positive
             if pred == 0:
@@ -368,11 +343,7 @@ def annotate_vcf(input_vcf: str, output_vcf: str, variant_lookup: Dict[str, Dict
             elif len(record.filter) == 0 or 'PASS' in record.filter:
                 # Set to PASS by clearing filters
                 record.filter.clear()
-        
-        # Write record to output
         vcf_out.write(record)
-    
-    # Close files
     vcf_in.close()
     vcf_out.close()
     
@@ -381,33 +352,25 @@ def annotate_vcf(input_vcf: str, output_vcf: str, variant_lookup: Dict[str, Dict
     logging.info(f"File {input_vcf}: Applied ML filter to {filtered_count} variants")
 
 def main():
-    # Parse arguments
+    
     args = parse_args()
-    args.input = [x.strip() for x in args.input.split()]
-    # Configure logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
     
-    # Set up output directory
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Set up temporary directory if provided
     tmp_dir = None
     if args.tmp_dir:
         tmp_dir = Path(args.tmp_dir)
         tmp_dir.mkdir(parents=True, exist_ok=True)
     
-    # First pass: Extract variant information from all VCF files
+    # Extract variant information from all VCF files
     variants_data, variant_ids, vcf_sources = extract_variant_info(args.input)
-
-    # Calculate means for imputation (using all variants for consistent imputation)
     means = impute_missing_values(variants_data)
-
-    # Prepare features for all variants
     features_df = prepare_features(variants_data, means)
 
-    # Split variants into SNVs and indels
+    # Split variants to perform split predictions
     snv_mask = features_df['IS_SNV'] == 1
     indel_mask = ~snv_mask
     
@@ -419,15 +382,12 @@ def main():
     
     logging.info(f"Split variants into {len(snv_variant_ids)} SNVs and {len(indel_variant_ids)} indels")
 
-    # Load models
     snv_model = load_model(args.snv_model)
     indel_model = load_model(args.indel_model)
 
-    # Determine thresholds
     snv_threshold = get_model_threshold(snv_model, args.threshold_type, args.snv_threshold)
     indel_threshold = get_model_threshold(indel_model, args.threshold_type, args.indel_threshold)
 
-    # Make predictions
     predictions_lookup = {}
     
     if len(snv_features) > 0:
@@ -447,28 +407,25 @@ def main():
                 'prediction': indel_predictions[i],
                 'threshold': indel_threshold
             }
-    for variant, prediction in predictions_lookup.items():
-        print(variant, prediction)
 
-    # Create mapping of VCF file to variants
+    # Create mapping of VCF files to keep track of variants
     vcf_variants = {}
     for i, vcf_file in enumerate(vcf_sources):
         if vcf_file not in vcf_variants:
             vcf_variants[vcf_file] = []
         vcf_variants[vcf_file].append(variant_ids[i])
 
-    # Annotate each VCF file
+    # Annotate annotate each VCF file and create output
     for vcf_file in args.input:
-        # Create output file path
+
         vcf_name = Path(vcf_file).name
         output_vcf = output_dir / vcf_name
         
-        # Create variant lookup for this file
+        # Lookup variants
         file_variant_ids = vcf_variants.get(vcf_file, [])
         file_predictions = {vid: predictions_lookup[vid] for vid in file_variant_ids if vid in predictions_lookup}
         threshold = f'{snv_threshold:.2f}/{indel_threshold:.2f}'
 
-        # Annotate VCF
         annotate_vcf(vcf_file, str(output_vcf), file_predictions, threshold)
     
     logging.info("VCF annotation complete")
