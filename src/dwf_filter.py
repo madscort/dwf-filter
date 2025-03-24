@@ -7,6 +7,8 @@ runs predictions through separate ML models for SNVs and indels, and annotates t
 prediction probabilities and filter status.
 """
 
+# mads - 2025-03-24
+
 import argparse
 import sys
 import logging
@@ -30,10 +32,10 @@ IMPUTE_ANNOT = ["AS_MQ", "ClippingRankSum", "HAPCOMP", "HAPDOM",
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Annotate VCF with ML-based variant classification")
-    parser.add_argument("--input", "-i", required=False, nargs='+', help="Input VCF file(s)", default=['input/vcf/E2_2_8_S18.GATKGVCF.vcf','input/vcf/E2_2_4_S14.GATKGVCF.vcf'])
-    parser.add_argument("--output-dir", "-o", required=False, help="Output directory for annotated VCFs",default='output/pred_vcfs')
-    parser.add_argument("--snv-model", "-sm", required=False, help="Path to trained ML model for SNVs", default='input/model/logistic_regression_snv_model.joblib')
-    parser.add_argument("--indel-model", "-im", required=False, help="Path to trained ML model for indels", default='input/model/random_forest_indel_model.joblib')
+    parser.add_argument("--input", "-i", required=True, nargs='+', help="Input VCF file(s)")
+    parser.add_argument("--output-dir", "-o", required=True, help="Output directory for annotated VCFs")
+    parser.add_argument("--snv-model", "-sm", required=True, help="Path to trained ML model for SNVs")
+    parser.add_argument("--indel-model", "-im", required=True, help="Path to trained ML model for indels")
     parser.add_argument("--snv-threshold", "-st", type=float, default=None, 
                         help="Custom probability threshold for SNVs (default: use model's threshold)")
     parser.add_argument("--indel-threshold", "-it", type=float, default=None, 
