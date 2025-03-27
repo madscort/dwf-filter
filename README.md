@@ -25,18 +25,22 @@ This will output X
 
 ### Repository contents
 ```Bash
-dwf-filer
-├── models/                              # Saved model instances
-├── configs/                             # Model training configurations
-├── data/                                # Test data
-├── src/                                 #
-│   ├── 01_variant_calling_benchmark.py  # 
-│   ├── 02_make_dataset.py               #
-│   ├── 03_train_model.py                #
-│   ├── 04_predict_model.py              #
-│   ├── 05_dwf_filter.py                 #
-│   ├── 06_variant_filter_benchmark.py   #
-│   └── X.py                             #
+dwf-filter
+├── models/                                      # Saved model instances
+├── configs/                                     # Model training configurations
+├── data/                                        # Test data
+├── src/                                         #
+│   ├── 01_variant_calling_benchmark.py          # Script for re-producing table 1.
+│   ├── 02_make_dataset.py                       # Creates labelled dataset for modelling
+│   ├── 03_train_model.py                        # Train and validates a model using repeated nested CV.
+│   ├── 04_predict_model.py                      # Re-trains on entire training set and predicts on held-out dataset.
+│   ├── 05_dwf_filter.py                         # Script for running saved model directly on VCF files.
+│   ├── 06_variant_filter_benchmark.py           # Script for re-producing table 2.
+│   ├── utils.py                                 # Utility functions
+│   ├── models/                                  # Muti-model class
+│   └── plot/                                    #
+│       ├── plot_04_predict_model.R              # Script for re-producing figure 2.
+│       └── plot_06_variant_filter_benchmark.R   # Script for re-producing figure 3+4.
 ├── LICENSE
 ├── environment.yaml
 └── README.md
