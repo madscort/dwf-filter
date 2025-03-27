@@ -35,12 +35,13 @@ dwf-filter
 │   ├── 03_train_model.py                        # Train and validates a model using repeated nested CV.
 │   ├── 04_predict_model.py                      # Re-trains on entire training set and predicts on held-out dataset.
 │   ├── 05_dwf_filter.py                         # Script for running saved model directly on VCF files.
-│   ├── 06_variant_filter_benchmark.py           # Script for re-producing table 2.
+│   ├── 06_variant_filter_benchmark.py           # Script for re-producing table 2 and data for figure 3+4.
 │   ├── utils.py                                 # Utility functions
 │   ├── models/                                  # Muti-model class
 │   └── plot/                                    #
 │       ├── plot_04_predict_model.R              # Script for re-producing figure 2.
-│       └── plot_06_variant_filter_benchmark.R   # Script for re-producing figure 3+4.
+│       ├── plot_06a_variant_filter_benchmark.R  # Script for re-producing figure 3.
+│       └── plot_06b_variant_filter_benchmark.R  # Script for re-producing figure 4.
 ├── LICENSE
 ├── environment.yaml
 └── README.md
