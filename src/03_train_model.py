@@ -185,47 +185,22 @@ def main(model="gmm", vtype="snv", log_path="output/test.log", dataset_path=None
     all_predictions_df.to_csv(output_path, sep='\t', index=False)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Run model training and evaluation.')
+    parser = argparse.ArgumentParser(description='Run repeated nested cross-validation for variant filtration ML model(s).')
     parser.add_argument('--model', type=str, choices=['logistic_regression', 'xgboost', 'random_forest', 'gmm'],
                         help='Model type to use for training: logistic_regression, xgboost, random_forest, gmm', default='gmm')
     parser.add_argument('--vtype', type=str, help='Variant type to use for training: snv, indel, all', default='snv')
-    parser.add_argument('--log', type=str, help='Path to the log file', default='output/test.log')
+    parser.add_argument('--log', type=str, help='Path to the log file', default='training.log')
     parser.add_argument('--data', type=str, help='Path to the dataset file', default=None)
-    parser.add_argument('--output', type=str, help='Path to save the output predictions file', default='output/testpreds.tsv')
-    parser.add_argument('--config', type=str, help='Path to the YAML configuration file', default='config/model_config.yaml')
+    parser.add_argument('--output', type=str, help='Path to save the output predictions file', default='cv_predictions.tsv')
+    parser.add_argument('--config', type=str, help='Path to the YAML configuration file', default='configs/cv_config.yaml')
 
     args = parser.parse_args()
 
     main(
-        model='gmm',
-        vtype='indel',
-        log_path='test.log',
-        config_path='cv_config.yaml',
-        output_path='/Users/madsnielsen/Predisposed/projects/filter_manuscript_repo/output/test_preds/training_predictions_gmm_indel.tsv'
+        model=args.model,
+        vtype=args.vtype,
+        log_path=args.log,
+        dataset_path=args.data,
+        output_path=args.output,
+        config_path=args.config
     )
-
-#     main(
-#         model=args.model,
-#         vtype=args.vtype,
-#         log_path=args.log,
-#         dataset_path=args.data,
-#         output_path=args.output,
-#         config_path=args.config
-#     )
-# if __name__ == "__main__":
-#     parser = argparse.ArgumentParser(description='Run model training and evaluation.')
-#     parser.add_argument('--model', type=str, choices=['logistic_regression', 'xgboost','lightgbm', 'random_forest', 'gmm'],
-#                         help='Model type to use for training: logistic_regression, xgboost, lightgbm, random_forest, gmm', default='gmm')
-#     parser.add_argument('--vtype', type=str, help='Variant type to use for training: snv, indel, all', default='snv')
-#     parser.add_argument('--log', type=str, help='Path to the log file', default='output/test.log')
-#     parser.add_argument('--data', type=str, help='Path to the dataset file', default=None)
-#     parser.add_argument('--output', type=str, help='Path to save the output predictions file', default='output/testpreds.tsv')
-
-#     args = parser.parse_args()
-
-#     main(
-#         model='gmm',
-#         vtype='indel',
-#         log_path='test.log',
-#         output_path='/Users/madsnielsen/Predisposed/projects/filter_manuscript_repo/output/test_preds/training_predictions_gmm_indel.tsv'
-#     )
