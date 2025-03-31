@@ -56,7 +56,6 @@ def process_variant_data(pooltable, methods, truth_set, baseline=None, pinpoint=
             
             if pinpoint:
                 vardict = get_vardict(
-                    decodetable=decodetable,
                     pooltable=pooltable,
                     variant_tables=variant_table_path,
                     is_joint=is_joint,
