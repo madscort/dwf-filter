@@ -35,7 +35,7 @@ def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Annotate VCF with ML-based variant classification")
     parser.add_argument("--input", "-i", required=True, nargs='+', help="Input VCF file(s)")
-    parser.add_argument("--output-dir", "-o", required=True, help="Output directory for annotated VCFs")
+    parser.add_argument("--output-dir", "-o", help="Output directory for annotated VCFs", default='.')
     parser.add_argument("--snv-model", "-sm", required=True, help="Path to trained ML model for SNVs")
     parser.add_argument("--indel-model", "-im", required=True, help="Path to trained ML model for indels")
     parser.add_argument("--snv-threshold", "-st", type=float, default=None, 
