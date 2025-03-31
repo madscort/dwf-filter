@@ -6,7 +6,6 @@ channels:
 dependencies:
   # Python and base packages
   - python=3.9
-  - pip>=21.0
   
   # Core Python packages
   - numpy
@@ -29,10 +28,6 @@ dependencies:
   - r-boot
   - r-patchwork
   - r-ggpubr
-  
-  # Add pip-installable packages
-  - pip:
-    - deepcopy
     
   # Additional specifications
 variables:
