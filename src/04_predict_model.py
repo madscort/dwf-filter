@@ -101,13 +101,13 @@ def main():
     parser.add_argument('--model', type=str, choices=['logistic_regression', 'xgboost', 'random_forest', 'gmm'],
                         help='Model type to use for training: logistic_regression, xgboost, random_forest, gmm',
                         default=None)
-    parser.add_argument('--output', type=str, help='Path to save the output predictions file', default='/Users/madsnielsen/Predisposed/projects/filter_manuscript_repo/output/holdout_preds/E2LLC_2_F1_snv.tsv')
-    parser.add_argument('--data', type=str, help='Path to the training dataset file', default='/Users/madsnielsen/Predisposed/data/datasets/E1LLC/processed_dataset_indel.tsv')
-    parser.add_argument('--holdout', type=str, help='Path to the hold-out dataset file', default='/Users/madsnielsen/Predisposed/data/datasets/E2LHC/processed_dataset_indel.tsv')
-    parser.add_argument('--vtype', type=str, help='Variant type to use for training: snv, indel, all', default='indel')
+    parser.add_argument('--output', type=str, help='Path to save the output predictions file', required=True)
+    parser.add_argument('--data', type=str, help='Path to the training dataset file', required=True)
+    parser.add_argument('--holdout', type=str, help='Path to the hold-out dataset file', required=True)
+    parser.add_argument('--vtype', type=str, help='Variant type to use for training: snv, indel, all', default='snv')
     parser.add_argument('--log', type=str, help='Path to the log file', default='train_model.log')
     parser.add_argument('--target_sensitivity', type=float, help='Sensitivity to optimise threshold for', default=99.99)
-    parser.add_argument('--save_models', type=str, help='Directory to save trained models', default='/Users/madsnielsen/Predisposed/projects/filter_manuscript_repo/output/model_weights')
+    parser.add_argument('--save_models', type=str, help='Directory to save trained models', default='./model_weights')
 
     args = parser.parse_args()
     logging.basicConfig(filename=args.log, level=logging.INFO)
