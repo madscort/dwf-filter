@@ -1,0 +1,39 @@
+name: dwf_filter
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # Python and base packages
+  - python=3.9
+  - pip>=21.0
+  
+  # Core Python packages
+  - numpy
+  - pandas
+  - scikit-learn
+  - pysam
+  - joblib
+  - pyyaml
+  - pathlib
+  - typing
+  
+  # R and R packages
+  - r-base
+  - r-essentials
+  - r-readr
+  - r-dplyr
+  - r-ggplot2
+  - r-forcats
+  - r-proc
+  - r-boot
+  - r-patchwork
+  - r-ggpubr
+  
+  # Add pip-installable packages
+  - pip:
+    - deepcopy
+    
+  # Additional specifications
+variables:
+  R_LIBS_USER: ${CONDA_PREFIX}/lib/R/library
