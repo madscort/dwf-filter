@@ -12,7 +12,7 @@ library(forcats)
 library(patchwork)
 
 plot_data <- 
-  read_tsv('data/variant_filter_benchmark_pins.tsv') %>% 
+  read_tsv('data/variant_filter_benchmark_pins.tsv', show_col_types = F) %>% 
   filter(filtering != 'baseline') %>% 
   filter(filtering != 'HT') %>% 
   mutate(caller = if_else(caller_type == 'joint', 'GATK joint', 'GATK')) %>% 

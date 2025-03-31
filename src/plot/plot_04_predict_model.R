@@ -16,9 +16,9 @@ library(ggpubr)
 
 # Load model held-out prediction data:
 predictions_snv <-
-  read_tsv('data/heldout_predictions_snv.tsv')
+  read_tsv('data/heldout_predictions_snv.tsv', show_col_types = F)
 predictions_indel <-
-  read_tsv('data/heldout_predictions_indel.tsv')
+  read_tsv('data/heldout_predictions_indel.tsv', show_col_types = F)
 
 # Function for calculating performance metrics during bootstrapping:
 calc_metrics <- function(data, indices) {
@@ -47,6 +47,7 @@ common_theme <- theme(
 )
 
 # Bootstrap SNV predictions for each model
+print('Bootstrapping SNV predictions. This takes a (long) while.')
 results_snv <- predictions_snv %>%
   group_by(model_name) %>%
   do({
@@ -60,6 +61,7 @@ results_snv <- predictions_snv %>%
   })
 
 # Bootstrap INDEL predictions for each model
+print('Bootstrapping INDEL predictions. This takes a (short) while.')
 results_indel <- predictions_indel %>%
   group_by(model_name) %>%
   do({
