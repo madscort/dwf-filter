@@ -14,9 +14,7 @@ from models.model import ML_model
 # Script for retraining model on narrow set of hyperparameters
 # and perform the last and final prediction on held-out dataset.
 
-def load_model_configs(config_path=None):
-    if config_path is None:
-        config_path = Path(__file__).parent.parent / "model_configs.yaml"
+def load_model_configs(config_path):
     with open(config_path, "r") as file:
         return yaml.safe_load(file)
 
@@ -101,6 +99,7 @@ def main():
     parser.add_argument('--model', type=str, choices=['logistic_regression', 'xgboost', 'random_forest', 'gmm'],
                         help='Model type to use for training: logistic_regression, xgboost, random_forest, gmm',
                         default=None)
+    parser.add_argument('--config', type=str, help='Path to model configurations file', default='./prediction_config.yaml')
     parser.add_argument('--output', type=str, help='Path to save the output predictions file', required=True)
     parser.add_argument('--data', type=str, help='Path to the training dataset file', required=True)
     parser.add_argument('--holdout', type=str, help='Path to the hold-out dataset file', required=True)
@@ -112,7 +111,7 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(filename=args.log, level=logging.INFO)
 
-    model_configs = load_model_configs()
+    model_configs = load_model_configs(args.config)
 
     dataset_path, holdout_path, output_path = Path(args.data), Path(args.holdout), Path(args.output)
     
