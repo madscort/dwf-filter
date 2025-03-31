@@ -5,14 +5,15 @@ channels:
   - defaults
 dependencies:
   # Python and base packages
-  - python=3.9
+  - python=3.10.9
   
   # Core Python packages
-  - numpy
-  - pandas
-  - scikit-learn
-  - pysam
-  - joblib
+  - numpy=1.23.5
+  - pandas=1.5.3
+  - scikit-learn=1.2.2
+  - pysam>=0.23.0
+  - joblib=1.2.0
+  - xgboost=1.7.4
   - pyyaml
   - pathlib
   - typing
@@ -28,7 +29,6 @@ dependencies:
   - r-boot
   - r-patchwork
   - r-ggpubr
-    
-  # Additional specifications
+
 variables:
   R_LIBS_USER: ${CONDA_PREFIX}/lib/R/library
