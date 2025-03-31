@@ -1,7 +1,6 @@
 import sys
 from pathlib import Path
 import pandas as pd
-import numpy as np
 from collections import namedtuple, Counter
 
 Variant = namedtuple(
@@ -80,7 +79,6 @@ mrmr10 = [
 
 mrmr5 = ["HAPCOMP", "dDP", "DP_site", "X_HIL", "AS_SOR"]
 
-# Feature subset dictionaries with 'all' explicitly defined
 feature_subsets_snv = {
     "all": all_features,
     "mrmr10": mrmr10snv,
@@ -116,20 +114,20 @@ def extract_features(dataset_path: Path, feature_subsets, skip_info: bool=True):
     dataset = pd.read_csv(dataset_path, sep='\t')
 
     # Extract features and labels
-    non_feature_cols = ['gene_target', 'variant_id', 'CHROM', 'POS', 'REF', 'ALT',
-                         'unique_variant_id', 'label', 'is_pool_pin', 'is_wgs_theoretical_pin',
-                         'is_lof', 'is_p', 'is_lofp', 'is_acmg', 'is_snv']
+    meta_cols = [
+        "variant_id", "unique_variant_id", "label",
+        "is_snv", "CHROM", "POS", "REF", "ALT"
+                ]
 
-    feature_cols = [col for col in dataset.columns if col not in non_feature_cols]
+    feature_cols = [col for col in dataset.columns if col not in meta_cols]
     
     X = dataset[feature_cols]
 
     y = dataset['label'].values
 
-    info = dataset[['gene_target', 'variant_id', 'unique_variant_id', 'CHROM', 'POS',
-                   'REF', 'ALT', 'is_pool_pin', 'is_wgs_theoretical_pin', 'is_lof',
-                   'is_p', 'is_lofp', 'is_acmg', 'is_snv', 'AD_sample', 'DP_site', 'VAF']]
-    
+    info = dataset[['variant_id', 'unique_variant_id', 'CHROM', 'POS',
+				'REF', 'ALT', 'is_snv', 'AD_sample', 'DP_site', 'VAF']]
+
     return X, y, info, feature_subsets
 
 def get_variants_from_pool(variant_table: Path, tool: str = "GATK") -> set:
@@ -534,8 +532,6 @@ def get_truth_variants(
     variant_tables: Path,
     tool: str = "GATK",
     joint: bool = False,
-    get_info: bool = False,
-    acmg=(),
 ) -> set:
     """Get variants from variant tables and return a dictionary of variant pools."""
 
@@ -556,17 +552,12 @@ def get_truth_variants(
             with open(variant_tables / (sample + f".{tool}.tsv"), "r") as fin:
                 header = fin.readline().strip().split("\t")
 
-                ANN_idx = header.index("ANN")
-                GENE_idx = header.index("GENE")
-                LOF_idx = header.index("LOF")
-                CLNSIG_idx = header.index("CLNSIG")
-                CLN_GENE_idx = header.index("GENEINFO")
                 for idx, element in enumerate(header):
                     if ".AD" in element:
                         AD_idx = idx
                     if ".DP" in element:
                         DP_sample_idx = idx
-                # Confirm that the header is as expected
+                
                 if header[0:5] != ["CHROM", "POS", "ID", "REF", "ALT"]:
                     raise ValueError("Variant table is in unexpected format.")
 
@@ -580,77 +571,6 @@ def get_truth_variants(
                     if len(ALT) > 1 or len(REF) > 1:
                         is_snv = 0
 
-                    # Target region ID
-                    gene_target = var_info[GENE_idx]
-
-                    # Functional annotation:
-                    effects = var_info[ANN_idx].split(",")
-                    try:
-                        gene_name = ",".join(
-                            [effect.strip().split("|")[3] for effect in effects]
-                        )
-                    except IndexError:
-                        print(effects)
-                        print(var_info)
-                    function = ",".join(
-                        [effect.strip().split("|")[1] for effect in effects]
-                    )
-                    HGVSc = ",".join(
-                        [effect.strip().split("|")[9] for effect in effects]
-                    )
-                    HGVSp = ",".join(
-                        [
-                            "NA"
-                            if len(effect.strip().split("|")[10].strip()) == 0
-                            else effect.strip().split("|")[10]
-                            for effect in effects
-                        ]
-                    )
-                    coding_uncertain = 0
-                    if len(effects) > 1:
-                        coding_uncertain = 1
-                    elif gene_name != gene_target:
-                        coding_uncertain = 1
-
-                    is_lof = 0
-                    lof_gene = "NA"
-                    lof = var_info[LOF_idx]
-                    if lof != "NA":
-                        is_lof = 1
-                        lof_gene = var_info[LOF_idx].split("|")[0].replace("(", "")
-
-                    # ClinVar annotation:
-                    is_p = 0
-                    clnsig = var_info[CLNSIG_idx].strip()
-                    cln_gene = var_info[CLN_GENE_idx].split(":")[0].strip()
-
-                    if "Pathogenic" in clnsig or "Likely_pathogenic" in clnsig:
-                        is_p = 1
-
-                    is_lofp = 0
-                    if is_p or is_lof:
-                        is_lofp = 1
-
-                    # ACMG state
-                    is_acmg = 0
-                    acmg_category = "NA"
-                    for g in gene_name.split(","):
-                        if g in acmg:
-                            is_acmg = 1
-                            acmg_category = acmg[g][0]
-
-                    if lof_gene in acmg:
-                        is_acmg = 1
-                        acmg_category = acmg[lof_gene][0]
-
-                    if gene_target in acmg:
-                        is_acmg = 1
-                        acmg_category = acmg[gene_target][0]
-
-                    if cln_gene in acmg:
-                        is_acmg = 1
-                        acmg_category = acmg[cln_gene][0]
-
                     DP_sample = var_info[DP_sample_idx].strip()
                     AD = var_info[AD_idx]
                     if AD.count(",") > 1:
@@ -663,20 +583,6 @@ def get_truth_variants(
                     assert POS.isdigit()
                     assert REF.isalpha()
                     assert ALT.isalpha()
-                    assert len(gene_target) > 0
-                    assert coding_uncertain in [0, 1]
-                    assert len(gene_name) > 0
-                    assert len(function) > 0
-                    assert len(HGVSc) > 0
-                    assert len(HGVSp) > 0
-                    assert is_lof in [0, 1]
-                    assert is_lofp in [0, 1]
-                    assert len(lof_gene) > 0
-                    assert len(clnsig) > 0
-                    assert is_p in [0, 1]
-                    assert len(cln_gene) > 0
-                    assert is_acmg in [0, 1]
-                    assert len(acmg_category) > 0
                     assert AD.isdigit()
                     assert DP_sample.isdigit()
 
@@ -697,44 +603,10 @@ def get_truth_variants(
                         variant_id = f"{CHROM}:{POS}:{REF}:{ALT}"
                         unique_variant_id = f"{pool}:{CHROM}:{POS}:{REF}:{ALT}"
                         variants.add(unique_variant_id)
-                        if get_info:
-                            variants_info[unique_variant_id] = Variant(
-                                pool,
-                                variant_id,
-                                unique_variant_id,
-                                CHROM,
-                                POS,
-                                REF,
-                                ALT,
-                                is_snv,
-                                gene_target,
-                                coding_uncertain,
-                                gene_name,
-                                function,
-                                HGVSc,
-                                HGVSp,
-                                is_lof,
-                                lof_gene,
-                                clnsig,
-                                is_p,
-                                cln_gene,
-                                is_lofp,
-                                is_acmg,
-                                acmg_category,
-                                AC,
-                                AD,
-                                DP_sample,
-                                int(AD) / int(DP_sample),
-                            )
     elif joint:
         with open(variant_tables / ("joint.GATK.tsv"), "r") as fin:
             header = fin.readline().strip().split("\t")
 
-            ANN_idx = header.index("ANN")
-            GENE_idx = header.index("GENE")
-            LOF_idx = header.index("LOF")
-            CLNSIG_idx = header.index("CLNSIG")
-            CLN_GENE_idx = header.index("GENEINFO")
             DP_site_idx = header.index("DP")
 
             sample_idx = {}
@@ -761,93 +633,10 @@ def get_truth_variants(
 
                 DP_site = var_info[DP_site_idx].strip()
 
-                # Target region ID
-                gene_target = var_info[GENE_idx]
-
-                # Functional annotation:
-                effects = var_info[ANN_idx].split(",")
-                try:
-                    gene_name = ",".join(
-                        [effect.strip().split("|")[3] for effect in effects]
-                    )
-                except IndexError:
-                    print(effects)
-                    print(var_info)
-                function = ",".join(
-                    [effect.strip().split("|")[1] for effect in effects]
-                )
-                HGVSc = ",".join([effect.strip().split("|")[9] for effect in effects])
-                HGVSp = ",".join(
-                    [
-                        "NA"
-                        if len(effect.strip().split("|")[10].strip()) == 0
-                        else effect.strip().split("|")[10]
-                        for effect in effects
-                    ]
-                )
-                coding_uncertain = 0
-                if len(effects) > 1:
-                    coding_uncertain = 1
-                elif gene_name != gene_target:
-                    coding_uncertain = 1
-
-                is_lof = 0
-                lof_gene = "NA"
-                lof = var_info[LOF_idx]
-                if lof != "NA":
-                    is_lof = 1
-                    lof_gene = var_info[LOF_idx].split("|")[0].replace("(", "")
-
-                # ClinVar annotation:
-                is_p = 0
-                clnsig = var_info[CLNSIG_idx].strip()
-                cln_gene = var_info[CLN_GENE_idx].split(":")[0].strip()
-
-                if "Pathogenic" in clnsig or "Likely_pathogenic" in clnsig:
-                    is_p = 1
-
-                is_lofp = 0
-                if is_p or is_lof:
-                    is_lofp = 1
-
-                # ACMG state
-                is_acmg = 0
-                acmg_category = "NA"
-                for g in gene_name.split(","):
-                    if g in acmg:
-                        is_acmg = 1
-                        acmg_category = acmg[g][0]
-
-                if lof_gene in acmg:
-                    is_acmg = 1
-                    acmg_category = acmg[lof_gene][0]
-
-                if gene_target in acmg:
-                    is_acmg = 1
-                    acmg_category = acmg[gene_target][0]
-
-                if cln_gene in acmg:
-                    is_acmg = 1
-                    acmg_category = acmg[cln_gene][0]
-
                 assert CHROM.startswith("chr")
                 assert POS.isdigit()
                 assert REF.isalpha()
                 assert ALT.isalpha()
-                assert len(gene_target) > 0
-                assert coding_uncertain in [0, 1]
-                assert len(gene_name) > 0
-                assert len(function) > 0
-                assert len(HGVSc) > 0
-                assert len(HGVSp) > 0
-                assert is_lof in [0, 1]
-                assert is_lofp in [0, 1]
-                assert len(lof_gene) > 0
-                assert len(clnsig) > 0
-                assert is_p in [0, 1]
-                assert len(cln_gene) > 0
-                assert is_acmg in [0, 1]
-                assert len(acmg_category) > 0
 
                 for sample in samples:
                     AC = Counter(var_info[sample_idx[sample].GT].split("/"))[ALT]
@@ -875,41 +664,9 @@ def get_truth_variants(
                             variant_id = f"{CHROM}:{POS}:{REF}:{ALT}"
                             unique_variant_id = f"{pool}:{CHROM}:{POS}:{REF}:{ALT}"
                             variants.add(unique_variant_id)
-                            if get_info:
-                                variants_info[unique_variant_id] = Variant(
-                                    pool,
-                                    variant_id,
-                                    unique_variant_id,
-                                    CHROM,
-                                    POS,
-                                    REF,
-                                    ALT,
-                                    is_snv,
-                                    gene_target,
-                                    coding_uncertain,
-                                    gene_name,
-                                    function,
-                                    HGVSc,
-                                    HGVSp,
-                                    is_lof,
-                                    lof_gene,
-                                    clnsig,
-                                    is_p,
-                                    cln_gene,
-                                    is_lofp,
-                                    is_acmg,
-                                    acmg_category,
-                                    AC,
-                                    AD,
-                                    DP,
-                                    VAF,
-                                )
     else:
         raise ValueError("joint must be a boolean.")
-    if get_info:
-        return variants, variants_info
-    else:
-        return variants
+    return variants
 
 
 if __name__ == "__main__":
