@@ -2,6 +2,47 @@ from pathlib import Path
 from utils import get_truth_variants, pin_truth_variants, pin_pool_variants
 import sys
 
+## mads - 2025-03-23
+# Script used for converting variant calls in pooled sequencing data and their 
+# corresponding "true" calls in WGS data, to a labelled dataset for training a
+# machine learning algorithm.
+# Variant tables are VCF files converted to TSV format using GATK VariantToTables
+#
+# The script takes:
+# Pool variant tables: variants called in all pools
+# WGS variant tables: variants calling in all WGS files
+# Pooltable: all sample ids of pools
+# Decodetable: mapping of pool sample to WGS sample ids.
+# include_annotations: annotations to include in the output dataset.
+#
+# The script outputs:
+# Labelled tsv with meta-info columns and included GATK annotations.
+
+def load_acmg(acmg_file):
+    acmg = {}
+    try:
+        with open(acmg_file, 'r') as fin:
+            fin.readline()  # Skip the header line
+            for line in fin:
+                try:
+                    info = line.split('\t')
+                    gene = info[0]
+                    disease = info[2]
+                    category = info[4]
+                    acmg[gene] = (category, disease)
+                except IndexError:
+                    if len(line.strip()) == 0:
+                        continue
+                    else:
+                        print('Error: Malformed line detected')
+                        print(line)
+                        sys.exit(1)
+    except FileNotFoundError:
+        print(f'Error: File "{acmg_file}" not found.')
+        sys.exit(1)
+
+    return acmg
+
 include_annotations = [
 	"ASSEMBLED_HAPS","AS_BaseQRankSum","AS_FS","AS_MQ","AS_MQRankSum",
 	"AS_QD","AS_ReadPosRankSum","AS_SOR","ClippingRankSum","HAPCOMP","HAPDOM",
@@ -173,34 +214,21 @@ def make_dataset(true_variants, pooltable, theoretical_pins, pool_pins, acmg, va
 							sep="\t", file=file_handle)
 
 if __name__ == '__main__':
-	pool_vartables = Path("/ngc/projects2/dp_00005/data/dwf/projects/variant_filter/data/E1_pool/gatk_jointgenotyping/pinpoint/results_lenient/variant_tables")
-	pooltable = Path("/ngc/projects2/dp_00005/data/dwf/projects/variant_filter/data/E1_pool/gatk_hc/call/data/cramtable_pool_E1.tsv")
-	decodetable = Path("/ngc/projects2/dp_00005/data/dwf/projects/variant_filter/_old/doba/data/raw/pool/decodetable.tsv")
-	wgs_vartable_folder = Path("/ngc/projects2/dp_00005/data/dwf/projects/variant_filter/data/E1_wgs/combined_pipeline/results/variant_tables")
-	output_table = Path(f"/ngc/projects2/dp_00005/data/dwf/projects/variant_filter/manuscript_repo/output/dataset.tsv")
-	acmg_file = Path("/ngc/projects2/dp_00005/data/dwf/databases/acmg/v3.2/acmg.tsv")
-	acmg = {}
+	base_path = Path()
+	experiment = 'E1'
 
-	with open(acmg_file, 'r') as fin:
-		fin.readline()
-		for line in fin:
-			try:
-				info = line.split('\t')
-				gene = info[0]
-				disease = info[2]
-				category = info[4]
-			except IndexError:
-				if len(line.strip()) == 0:
-					continue
-				else:
-					print('error')
-					print(line)
-					sys.exit(1)
-			acmg[gene] = (category,disease)
+	pool_vartables = base_path / f"data/{experiment}_pool/gatk/results_lenient/variant_tables"
+	wgs_vartable_folder = base_path / f"data/{experiment}_wgs/results/variant_tables"
+	decodetable = base_path / "data/decodetable.tsv"
+	pooltable = base_path / f"data/{experiment}_pool/pooltable.tsv"
+
+	output_table = base_path / f"/{experiment}_dataset.tsv"
+	acmg_file = Path("")
+	acmg = load_acmg(acmg_file)
 
 	true_variants = set()
-	dv_variants, dv_variants_info = get_truth_variants(decodetable=decodetable, variant_tables=wgs_vartable_folder, tool='DV', joint=False, get_info=True, acmg=acmg)
-	gatkj_variants, gatkj_variants_info = get_truth_variants(decodetable=decodetable, variant_tables=wgs_vartable_folder, tool='GATK', joint=True, get_info=True, acmg=acmg)
+	dv_variants = get_truth_variants(decodetable=decodetable, variant_tables=wgs_vartable_folder, tool='DV', joint=False)
+	gatkj_variants = get_truth_variants(decodetable=decodetable, variant_tables=wgs_vartable_folder, tool='GATK', joint=True)
 
 	theoretical_pins = set()
 	_, theoretical_pins_gatkj = pin_truth_variants(decodetable=decodetable, pooltable=pooltable, variant_tables=wgs_vartable_folder, matrix_size=10, tool='GATK')
@@ -212,5 +240,5 @@ if __name__ == '__main__':
 	true_variants.update(dv_variants.union(gatkj_variants))
 	theoretical_pins.update(theoretical_pins_dv.union(theoretical_pins_gatkj))
 
-	_, pool_pins = pin_pool_variants(decodetable=decodetable, pooltable=pooltable, variant_tables=pool_vartables, matrix_size=10, tool='GATKGVCF')
+	_, pool_pins = pin_pool_variants(decodetable=decodetable, pooltable=pooltable, variant_tables=pool_vartables, matrix_size=10, tool='GATKGVCF', naming='deprecated')
 	make_dataset(true_variants=true_variants, theoretical_pins=theoretical_pins, pool_pins=pool_pins, acmg=acmg, vartable_folder=pool_vartables, pooltable=pooltable, output_table=output_table)
