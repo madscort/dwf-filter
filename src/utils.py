@@ -132,93 +132,145 @@ def get_variants_from_pool(variant_table: Path, tool: str = "GATK") -> set:
     return variants
 
 
-def pin_pool_variants(decodetable:Path, pooltable:Path, variant_tables:Path, matrix_size:int, tool:str='GATK', vardict:dict="", naming='new'):
-    """Returns a dictionary of sample specific variants."""	
-    # vardict: zero index row and column varids vardict['column'][0-9] = set('chrom:pos:ref:alt'..)
+def pin_truth_variants(decodetable:Path, pooltable:Path, variant_tables:Path, matrix_size:int, tool:str='GATK', joint:bool=False, translate={}) -> dict:
+	"""Returns a dictionary of sample specific variants."""
 
-    sample_to_pools = {}
-    samples = {}
-    pool_pinpointables = set()
-    
-    # make list of length matrix_size with empty strings
-    horizontal_pool_table = ["" for _ in range(matrix_size)]
-    vertical_pool_table = ["" for _ in range(matrix_size)]
+	samples = {}
+	sample_variants = {}
+	theoretical_pinpointables = set()
+	variant_pools = {}
+	sample_to_pools = {}
 
-    # Get pool ids:
-    # Decodetable gives short_id and creates a tuple with the horizontal and vertical pool ids
-    with open(decodetable, "r") as fin:
-        for line in fin:
-            id, h, v = line.strip().split("\t")
-            samples[id] = [h,v]
-            sample_to_pools[id] = (int(h.split('_')[1])-1, int(v.split('_')[1])-1)
+	with open(decodetable, "r") as fin:
+		for line in fin:
+			info = line.strip().split("\t")
+			id, h, v = line.strip().split("\t")
+			samples[id] = []
+			samples[id].append(h.split("_")[3])
+			samples[id].append(v.split("_")[3])
+			
+			sample_to_pools[id] = (int(h.split("_")[3][-2:])-1, int(v.split("_")[3][-2:])-1)
+	
+	with open(pooltable, "r") as fin:
+		for line in fin:
+			pool = line.strip().split("\t")[0]
+			pool_short_id = pool.split("_")[3]
+			variant_pools[pool_short_id] = set()
+	
+	for sample in samples:
+		sample_variants[sample] = {}
+		sample_variants[sample]['calls'] = set()
+		sample_variants[sample]['unique'] = set()
+		sample_variants[sample]['pinnable'] = set()
+		if not joint:
+			with open(variant_tables / (sample + f".{tool}.tsv"), 'r' ) as fin:
+				header = fin.readline().strip().split('\t')
 
-    if vardict == '':
-        with open(pooltable, "r") as fin:
-            for line in fin:
-                if naming == 'new':
-                    id = line.strip().split("\t")[0]
-                    coor = id[-3]
-                    idx = id[-2:]
-                    if coor.startswith('H'):
-                        horizontal_pool_table[int(idx)-1] = variant_tables / Path(f"{id}.{tool}.tsv")
-                    elif coor.startswith('V'):
-                        vertical_pool_table[int(idx)-1] = variant_tables / Path(f"{id}.{tool}.tsv")
-                else:
-                    id = line.strip().split("\t")[0]
-                    if len(id.split('.')) > 1:
-                        id = id.split('.')[0]
-                    coor, idx = id.split('_')[1:3]
-                    if coor.startswith('1'):
-                        horizontal_pool_table[int(idx)-1] = variant_tables / Path(f"{id}.{tool}.tsv")
-                    elif coor.startswith('2'):
-                        vertical_pool_table[int(idx)-1] = variant_tables / Path(f"{id}.{tool}.tsv")
+				if header[0:5] != ['CHROM', 'POS', 'ID', 'REF', 'ALT']:
+					raise ValueError("Variant table is in unexpected format.")
+				for line in fin:
+					var_info = line.strip().split('\t')
+					if tool == 'GATK':
+						CHROM,POS,_,REF,ALT,_,_,AC = var_info[0:8]
+					elif tool == 'DV':
+						CHROM,POS,_,REF,ALT,_,FILTER,_,GT = var_info[0:9]
+						if FILTER != 'PASS':
+							continue
+					else:
+						raise ValueError("Only GATK is supported for now.")
+					
+					if ALT == '*' or REF == '*':
+						continue
+					varid = f"{CHROM}:{POS}:{REF}:{ALT}"
+					sample_variants[sample]['calls'].add(varid)
 
-        # Create lists of sets for storing variants in each pool
-        horizontal_pools = [set() for _ in range(matrix_size)]  # Variant sets for each horizontal pool
-        vertical_pools = [set() for _ in range(matrix_size)]  # Variant sets for each vertical pool
+					# ADD QC HERE:
+					# DP = var_info[11]
+					for pool in samples[sample]:
+						variant_pools[pool].add(varid)
+	if joint:
+		with open(variant_tables / ('joint.GATK.tsv'), 'r' ) as fin:
+			header = fin.readline().strip().split('\t')
+			sample_idx = {}
+			for sample in samples:
+				if translate:
+					sample_idx[sample] = S_idx(
+						header.index(f"{translate[sample]}.AD"),
+						header.index(f"{translate[sample]}.DP"),
+						header.index(f"{translate[sample]}.GT")
+					)
+				else:
+					sample_idx[sample] = S_idx(
+						header.index(f"{sample}.AD"),
+						header.index(f"{sample}.DP"),
+						header.index(f"{sample}.GT")
+					)
+			
+			# Confirm that the header is as expected
+			if header[0:5] != ['CHROM', 'POS', 'ID', 'REF', 'ALT']:
+				raise ValueError("Variant table is in unexpected format.")
 
-        # Fill the variant sets from the variant tables
-        for i in range(matrix_size):
-            horizontal_pools[i].update(get_variants_from_pool(horizontal_pool_table[i]))
-            vertical_pools[i].update(get_variants_from_pool(vertical_pool_table[i]))
-    else:
-        horizontal_pools = vardict['row']
-        vertical_pools = vardict['column']
+			for line in fin:
+				var_info = line.strip().split('\t')
+				CHROM,POS,_,REF,ALT = var_info[0:5]
+				if ALT == '*' or REF == '*':
+					continue
+				for sample in samples:
+					AC = Counter(var_info[sample_idx[sample].GT].split('/'))[ALT]
+					if AC == 0:
+						continue
+					else:
+						varid = f"{CHROM}:{POS}:{REF}:{ALT}"
+						sample_variants[sample]['calls'].add(varid)
+						for pool in samples[sample]:
+							if pool == '.':
+								continue
+							variant_pools[pool].add(varid)
+	
+	# Create lists of sets for storing variants in each pool
+	horizontal_pools = [set() for _ in range(matrix_size)]  # Variant sets for each horizontal pool
+	vertical_pools = [set() for _ in range(matrix_size)]  # Variant sets for each vertical pool
+	
+	for pool, variants in variant_pools.items():
+		dim = pool[-3]
+		idx = pool[-2:]
+		if dim == 'H':
+			horizontal_pools[int(idx)-1].update(variants)
+		elif dim == 'V':
+			vertical_pools[int(idx)-1].update(variants)
+		else:
+			sys.exit('ERROR')
+	
+	# Process each sample to identify unique variants
+	
+	for sample, (h_idx, v_idx) in sample_to_pools.items():
 
-    # Dictionary to store the identified variants per sample
-    sample_variants = {}
+		# All pools except the current horizontal and vertical pool for the sample
+		other_h_pools = set().union(*(horizontal_pools[i] for i in range(matrix_size) if i != h_idx))
+		other_v_pools = set().union(*(vertical_pools[i] for i in range(matrix_size) if i != v_idx))
+		
+		# Unique in both dimensions
+		unique_h_variants = horizontal_pools[h_idx].difference(other_h_pools)
+		unique_v_variants = vertical_pools[v_idx].difference(other_v_pools)
+		unique_pinnable = unique_h_variants.intersection(unique_v_variants)
 
-    # Process each sample to identify unique variants
-    for sample, (h_idx, v_idx) in sample_to_pools.items():
+		# Unique in one dimension but can appear in multiple in the other
+		unique_one_dimension_h = unique_h_variants.intersection(vertical_pools[v_idx])
+		unique_one_dimension_v = unique_v_variants.intersection(horizontal_pools[h_idx])
+		all_pinnable = unique_one_dimension_h.union(unique_one_dimension_v)
 
-        # All pools except the current horizontal and vertical pool for the sample
-        other_h_pools = set().union(*(horizontal_pools[i] for i in range(matrix_size) if i != h_idx))
-        other_v_pools = set().union(*(vertical_pools[i] for i in range(matrix_size) if i != v_idx))
-        
-        # Unique in both dimensions
-        unique_h_variants = horizontal_pools[h_idx].difference(other_h_pools)
-        unique_v_variants = vertical_pools[v_idx].difference(other_v_pools)
-        unique_pinnable = unique_h_variants.intersection(unique_v_variants)
+		# Collecting results for each sample
+		sample_variants[sample]['unique'] = unique_pinnable
+		sample_variants[sample]['pinnable'] = all_pinnable
 
-        # Unique in one dimension but can appear in multiple in the other
-        unique_one_dimension_h = unique_h_variants.intersection(vertical_pools[v_idx])
-        unique_one_dimension_v = unique_v_variants.intersection(horizontal_pools[h_idx])
-        all_pinnable = unique_one_dimension_h.union(unique_one_dimension_v)
+	# Return a dictionary of sample specific pinpointable variants
+	# and a dictionary of pool specific variants
+	for sample in sample_variants:
+		for var in sample_variants[sample]['unique']:
+			for pool in samples[sample]:
+				theoretical_pinpointables.add(f"{pool}:{var}")
 
-        # Collecting results for each sample
-        sample_variants[sample] = {
-            "unique": unique_pinnable,
-            "pinnable": all_pinnable
-        }
-
-    # Return the dictionary of sample specific pinpointable variants
-    # Return the dictionary of pool specific variants
-    for sample in sample_variants:
-        for var in sample_variants[sample]['unique']:
-            for pool in samples[sample]:
-                pool_pinpointables.add(f"{pool}:{var}")
-
-    return sample_variants, pool_pinpointables
+	return sample_variants, theoretical_pinpointables
 
 
 def pin_pool_variants(decodetable:Path, pooltable:Path, variant_tables:Path, matrix_size:int, tool:str='GATK', vardict:dict="", naming='new'):
