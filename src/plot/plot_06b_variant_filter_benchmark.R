@@ -11,6 +11,10 @@ library(ggplot2)
 library(forcats)
 library(patchwork)
 
+titlesize <- 8
+textsize <- 7
+subtitlesize <- 8
+
 plot_data <- 
   read_tsv('data/variant_filter_benchmark_pins.tsv', show_col_types = F) %>% 
   filter(filtering != 'baseline') %>% 
@@ -26,23 +30,23 @@ create_metric_plot <- function(data, variant_type_filter, metric_filter, y_limit
   data %>% 
     filter(variant_type == variant_type_filter) %>% 
     filter(metric == metric_filter) %>% 
-    ggplot(aes(x = caller_position, y = value, label = filtering)) +
-    geom_label(nudge_x = 0.05, hjust = 0, size = 3) +
-    geom_point(aes(x = caller_position, y = baseline, color = "Baseline")) +
+    ggplot(aes(x = caller_position, y = value)) +
+    geom_point(aes(x = caller_position, y = baseline, color = "Baseline"), size = 0.7) +
     geom_segment(aes(y = baseline, yend = value, color = direction),
-                 arrow = arrow(length = unit(0.015, "npc")),
-                 size = 0.5,
+                 arrow = arrow(length = unit(0.02, "npc")),
+                 size = 0.7,
                  show.legend = FALSE) +
     scale_color_manual(name = NULL,
                        values = c("up" = "darkgreen",
                                   "down" = "darkred",
                                   "Baseline" = "black"),
                        breaks = c("Baseline")) +
-    update_geom_defaults("label", list(size = 3.5)) +
-    scale_x_discrete(labels = function(x) sub("\\..*$", "", x)) +
+    scale_x_discrete(labels = function(x) sub("^.*\\.", "", x)) +
     theme_bw() +
-    theme(axis.title = element_text(size = 10),
-          axis.text = element_text(size = 10),
+    theme(axis.title = element_text(size = textsize),
+          axis.text = element_text(size = textsize),
+          plot.subtitle=element_text(size = subtitlesize),
+          plot.title=element_text(size = titlesize),
           legend.position = '') +
     ylim(y_limits[1], y_limits[2]) +
     labs(x = NULL, y = NULL) +
@@ -67,21 +71,27 @@ f1_pin_indel_plot <- create_metric_plot(plot_data, 'INDEL', 'F1', c(0.0, 1), 'F1
 
 # Combine SNVs into panel (a): 
 sens_pin_snv_plot <- sens_pin_snv_plot + ggtitle("a - SNVs", subtitle = "Sensitivity") + 
-  theme(plot.title = element_text(face = "bold"))
+  theme(plot.title = element_text(face = "bold", size = titlesize),
+        plot.subtitle=element_text(size = subtitlesize))
 fdr_pin_snv_plot <- fdr_pin_snv_plot + ggtitle("", subtitle = "FDR") + 
-  theme(plot.title = element_text(face = "bold"))
+  theme(plot.title = element_text(face = "bold", size = titlesize),
+        plot.subtitle=element_text(size = subtitlesize))
 f1_pin_snv_plot <- f1_pin_snv_plot + ggtitle("", subtitle = "F1-score") + 
-  theme(plot.title = element_text(face = "bold"))
+  theme(plot.title = element_text(face = "bold", size = titlesize),
+        plot.subtitle=element_text(size = subtitlesize))
 
 pin_bench_snv_plot <- sens_pin_snv_plot | fdr_pin_snv_plot | f1_pin_snv_plot
 
 # Combine INDELs into panel (b): 
 sens_pin_indel_plot <- sens_pin_indel_plot + ggtitle("b - Indels", subtitle = "Sensitivity") + 
-  theme(plot.title = element_text(face = "bold"))
+  theme(plot.title = element_text(face = "bold", size = titlesize),
+        plot.subtitle=element_text(size = subtitlesize))
 fdr_pin_indel_plot <- fdr_pin_indel_plot + ggtitle("", subtitle = "FDR") + 
-  theme(plot.title = element_text(face = "bold"))
+  theme(plot.title = element_text(face = "bold", size = titlesize),
+        plot.subtitle=element_text(size = subtitlesize))
 f1_pin_indel_plot <- f1_pin_indel_plot + ggtitle("", subtitle = "F1-score") + 
-  theme(plot.title = element_text(face = "bold"))
+  theme(plot.title = element_text(face = "bold", size = titlesize),
+        plot.subtitle=element_text(size = subtitlesize))
 
 pin_bench_indel_plot <- sens_pin_indel_plot | fdr_pin_indel_plot | f1_pin_indel_plot
 
@@ -90,5 +100,7 @@ pin_bench_plot <- pin_bench_snv_plot / pin_bench_indel_plot
 
 ggsave('variant_filter_benchmark_pins.png',
        pin_bench_plot,
-       width = 12,
-       height = 8)
+       dpi=600,
+       width = 178,
+       height = 118.66,
+       units = "mm")

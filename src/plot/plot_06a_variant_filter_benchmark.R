@@ -11,6 +11,10 @@ library(ggplot2)
 library(forcats)
 library(patchwork)
 
+titlesize <- 8
+textsize <- 7
+subtitlesize <- 8
+
 plot_data <-
   read_tsv('data/variant_filter_benchmark_pools.tsv', show_col_types = F) %>% 
   filter(filtering != 'baseline') %>% 
@@ -25,21 +29,21 @@ plot_data <-
 sens_plot <- 
   plot_data %>% 
   filter(metric == 'sensitivity') %>% 
-  ggplot(aes(x=caller_position, y=value, label=filtering)) +
-  geom_label(nudge_x = 0.05, hjust = 0, size = 3) +
-  geom_point(aes(x=caller_position,y=baseline, color = "Baseline")) +
+  ggplot(aes(x=caller_position, y=value)) +
+  geom_point(aes(x=caller_position,y=baseline, color = "Baseline"), size = 0.7) +
   geom_segment(aes(y=baseline, yend=value, color=direction),
-               arrow = arrow(length = unit(0.015, "npc")),
-               size = 0.5,
+               arrow = arrow(length = unit(0.02, "npc")),
+               size = 0.7,
                show.legend = FALSE) +
   scale_color_manual(name = NULL,
                      values = c("up" = "darkgreen", "down" = "darkred", "Baseline" = "black"),
                      breaks = c("Baseline")) +
-  update_geom_defaults("label", list(size = 3.5)) +
-  scale_x_discrete(labels = function(x) sub("\\..*$", "", x)) +
+  scale_x_discrete(labels = function(x) sub("^.*\\.", "", x)) +
   theme_bw() +
-  theme(axis.title = element_text(size = 10),
-        axis.text = element_text(size = 10),
+  theme(axis.title = element_text(size = textsize),
+        axis.text = element_text(size = textsize),
+        plot.subtitle=element_text(size = subtitlesize),
+        plot.title=element_text(size = titlesize),
         legend.position = '') +
   ylim(0.5,1) +
   labs(x=NULL,
@@ -49,21 +53,21 @@ sens_plot <-
 fdr_plot <- 
   plot_data %>% 
   filter(metric == 'FDR') %>% 
-  ggplot(aes(x=caller_position, y=value, label=filtering)) +
-  geom_label(nudge_x = 0.05, hjust = 0, size = 3) +
-  geom_point(aes(x=caller_position,y=baseline, color = "Baseline")) +
+  ggplot(aes(x=caller_position, y=value)) +
+  geom_point(aes(x=caller_position,y=baseline, color = "Baseline"), size = 0.7) +
   geom_segment(aes(y=baseline, yend=value, color=direction),
-               arrow = arrow(length = unit(0.015, "npc")),
-               size = 0.5,
+               arrow = arrow(length = unit(0.02, "npc")),
+               size = 0.7,
                show.legend = FALSE) +
   scale_color_manual(name = NULL,
                      values = c("up" = "darkgreen", "down" = "darkred", "Baseline" = "black"),
                      breaks = c("Baseline")) +
-  update_geom_defaults("label", list(size = 4)) +
-  scale_x_discrete(labels = function(x) sub("\\..*$", "", x)) +
+  scale_x_discrete(labels = function(x) sub("^.*\\.", "", x)) +
   theme_bw() +
-  theme(axis.title = element_text(size = 10),
-        axis.text = element_text(size = 10),
+  theme(axis.title = element_text(size = textsize),
+        axis.text = element_text(size = textsize),
+        plot.subtitle=element_text(size = subtitlesize),
+        plot.title=element_text(size = titlesize),
         legend.position = '') +
   ylim(0,0.5) +
   labs(x=NULL,
@@ -73,21 +77,21 @@ fdr_plot <-
 f1_plot <- 
   plot_data %>% 
   filter(metric == 'F1') %>% 
-  ggplot(aes(x=caller_position, y=value, label=filtering)) +
-  geom_label(nudge_x = 0.05, hjust = 0, size = 3) +
-  geom_point(aes(x=caller_position,y=baseline, color = "Baseline")) +
+  ggplot(aes(x=caller_position, y=value)) +
+  geom_point(aes(x=caller_position,y=baseline, color = "Baseline"), size = 0.7) +
   geom_segment(aes(y=baseline, yend=value, color=direction),
-               arrow = arrow(length = unit(0.015, "npc")),
-               size = 0.5,
+               arrow = arrow(length = unit(0.02, "npc")),
+               size = 0.7,
                show.legend = FALSE) +
   scale_color_manual(name = NULL,
                      values = c("up" = "darkgreen", "down" = "darkred", "Baseline" = "black"),
                      breaks = c("Baseline")) +
-  update_geom_defaults("label", list(size = 4)) + 
-  scale_x_discrete(labels = function(x) sub("\\..*$", "", x)) +
+  scale_x_discrete(labels = function(x) sub("^.*\\.", "", x)) +
   theme_bw() +
-  theme(axis.title = element_text(size = 10),
-        axis.text = element_text(size = 10),
+  theme(axis.title = element_text(size = textsize),
+        axis.text = element_text(size = textsize),
+        plot.subtitle=element_text(size = subtitlesize),
+        plot.title=element_text(size = titlesize),
         legend.position = '') +
   ylim(0.5,1) +
   labs(x=NULL,
@@ -99,5 +103,7 @@ bench_plot <-
 
 ggsave('./variant_filter_benchmark_pool.png',
        bench_plot,
-       width = 12,
-       height = 4)
+       dpi=600,
+       width = 178,
+       height = 118.66/2,
+       units = "mm")
