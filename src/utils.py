@@ -1,7 +1,14 @@
 import sys
+import subprocess
+import shutil
+import tempfile
 from pathlib import Path
 import pandas as pd
 from collections import namedtuple, Counter
+from typing import Dict, Tuple, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 S_idx = namedtuple("S_idx", ["AD", "DP", "GT"])
 
@@ -360,7 +367,6 @@ def pin_pool_variants(decodetable:Path, pooltable:Path, variant_tables:Path, mat
 
     return sample_variants, pool_pinpointables
 
-
 def get_pool_variants(
     pooltable: Path,
     variant_tables: Path,
@@ -525,7 +531,6 @@ def get_pool_variants(
 
     return variants
 
-
 def get_truth_variants(
     decodetable: Path,
     variant_tables: Path,
@@ -666,6 +671,360 @@ def get_truth_variants(
     else:
         raise ValueError("joint must be a boolean.")
     return variants
+
+def calculate_metrics(tp: int, fp: int, fn: int) -> Dict[str, float]:
+    """Calculate performance metrics from TP, FP, FN counts."""
+    metrics = {}
+    metrics['sensitivity'] = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    metrics['precision'] = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    metrics['F1_score'] = (2 * tp) / (2 * tp + fp + fn) if (2 * tp + fp + fn) > 0 else 0.0
+    metrics['FDR'] = fp / (fp + tp) if (fp + tp) > 0 else 0.0
+    metrics['total_variant_calls'] = tp + fp
+    metrics['total_variants_in_truthset'] = tp + fn
+    return metrics
+
+def tabix_index(vcf_path: Path) -> None:
+    """Index a bgzipped VCF with tabix."""
+    vcf_path = Path(vcf_path)
+    cmd = ["tabix", "-p", "vcf", str(vcf_path)]
+    print(f"Indexing {vcf_path} ...")
+    subprocess.run(cmd, check=True)
+
+def normalize_vcf(
+    input_vcf: Path,
+    output_vcf: Path,
+    reference: Path,
+    bed: Path
+    ) -> Path:
+    """
+    Normalize a VCF: split multi-allelic sites and remove duplicates.
+
+    Args:
+        input_vcf: input bgzipped VCF
+        output_vcf: normalized bgzipped VCF
+
+    Returns:
+        Path to normalized, bgzipped, and tabix-indexed VCF
+    """
+    input_vcf = Path(input_vcf)
+    output_vcf = Path(output_vcf)
+    reference = Path(reference)
+    
+    if not Path(f"{input_vcf}.tbi").exists():
+        tabix_index(input_vcf)
+    
+
+    cmd = [
+        "bcftools", "norm",
+        "-m", "-both",
+        "-d", "exact",
+        "-f", str(reference),
+        "-R", str(bed),
+        "--force",
+        "-Oz",
+        "-o", str(output_vcf),
+        str(input_vcf)]
+
+    subprocess.run(cmd, check=True)
+    tabix_index(output_vcf)
+    return output_vcf
+
+
+def merge_vcfs(
+    sample_ids: List[str],
+    input_dir: Path,
+    caller: str,
+    output_vcf: Path,
+    reference: Path,
+    bed: Path
+) -> Path:
+    """
+    Merge VCF files and keep unique variation.
+
+    Args:
+        sample_ids: list of sample IDs (expects {sample}.vcf.gz in input_dir)
+        input_dir: directory containing VCFs
+        output_vcf: final merged VCF.gz path
+    """
+    input_dir = Path(input_dir)
+    output_vcf = Path(output_vcf)
+    tmp_merged = output_vcf.with_suffix(".merged.tmp.vcf.gz")
+    vcfs = [str(input_dir / f"{sid}.{caller}.vcf.gz") for sid in sample_ids]
+
+    for vcf in vcfs:
+        if not Path(f"{vcf}.tbi").exists():
+            tabix_index(vcf)
+
+    ## Merge
+    merge_cmd = [
+        "bcftools", "merge",
+        "-m", "none",
+        "--force-samples",
+        "-f", "PASS",
+        "-Oz",
+        "-o", str(tmp_merged),
+    ] + vcfs
+    subprocess.run(merge_cmd, check=True)
+
+    ## Remove duplicates and split multi-allelic
+    normalize_vcf(tmp_merged, output_vcf, reference, bed)
+    tmp_merged.unlink(missing_ok=True)
+    tmp_merged.with_suffix('.tbi').unlink(missing_ok=True)
+    return output_vcf
+
+def subset_multisample_vcf(
+    sample_ids: List[str],
+    input_vcf: Path,
+    output_vcf: Path,
+    reference: Path,
+    bed: Path,
+    format_filter: str | None = None
+) -> Path:
+    """
+    Extract a subset of samples from a multi-sample VCF
+
+    Args:
+        sample_ids: samples to keep
+        input_vcf: input multi-sample VCF(.gz)
+        output_vcf: output filtered VCF(.gz)
+        reference: reference genome
+        bed: BED file for regions
+        format_filter: Optional FORMAT field to filter on (e.g., 'AC', 'AD', 'AF', 'VAF').
+                      If None, uses -c 1 (default for GT-based VCFs).
+                      If specified, filters on FORMAT/{field}>0
+
+    Returns:
+        Path to bgzipped, tabix-indexed VCF.
+    """
+    input_vcf = Path(input_vcf)
+    output_vcf = Path(output_vcf)
+    tmp_subset = output_vcf.with_suffix(".subset.tmp.vcf.gz")
+    tmp_filtered = output_vcf.with_suffix(".filtered.tmp.vcf.gz")
+    samples_arg = ",".join(sample_ids)
+
+    # Subset samples
+    subset_cmd = [
+        "bcftools", "view",
+        "-s", samples_arg,
+        "-Oz",
+        "-o", str(tmp_subset),
+        str(input_vcf),
+    ]
+    subprocess.run(subset_cmd, check=True)
+    tabix_index(tmp_subset)
+    
+    # Add filter: either -c 1 or FORMAT field filter
+    filter_arg = "-c" if format_filter is None else "-i"
+    filter_value = "1" if format_filter is None else f"FORMAT/{format_filter}>0"
+    
+    # Filter for only entries with actual calls
+    filter_cmd = [
+        "bcftools", "view",
+        filter_arg, filter_value,
+        "-Oz",
+        "-o", str(tmp_filtered),
+        str(tmp_subset),
+    ]
+    
+    subprocess.run(filter_cmd, check=True)
+    
+    # Step 3: Normalize
+    normalize_vcf(tmp_filtered, output_vcf, reference, bed)
+    
+    # Cleanup
+    tmp_subset.unlink(missing_ok=True)
+    tmp_subset.with_suffix('.tbi').unlink(missing_ok=True)
+    tmp_filtered.unlink(missing_ok=True)
+    
+    return output_vcf
+
+
+def intersect_vcfs_vcfeval(
+    a_vcf: Path,
+    b_vcf: Path,
+    sdf_dir: Path,
+    out_prefix: Path,
+    singularity_img: Path | None = None,
+    threads: int = 4,
+    mem_gb: int = 8
+) -> Path:
+    """
+    Intersect two VCFs using RTG vcfeval and return a bgzipped, indexed VCF
+    containing the intersection (true positives).
+
+    Args:
+        vcf_a: first VCF(.gz)
+        vcf_b: second VCF(.gz)
+        sdf_dir: RTG SDF directory for the reference
+        out_prefix: path to write intersection (.vcf.gz)
+        singularity_img: optional path to rtgtools .sif to run via Singularity
+        threads: vcfeval --threads
+        mem_gb: Java heap for rtg (-Xmx)
+
+    Returns:
+        Path to bgzipped, tabix-indexed intersection VCF (tp.vcf.gz copy).
+    """
+    background = Path(b_vcf).resolve()
+    calls = Path(a_vcf).resolve()
+    sdf_dir = Path(sdf_dir)
+    out_prefix = Path(out_prefix)
+
+    with tempfile.TemporaryDirectory(prefix="vcfeval_tmp_") as tmp_root:
+        tmp_root = Path(tmp_root)
+        outdir = tmp_root / "vcfeval_out"
+        # Build the vcfeval command (host or Singularity)
+        base_cmd = []
+        if singularity_img:
+            base_cmd = ["singularity", "exec", "--cleanenv"]
+            # Bind input paths
+            for p in {tmp_root, Path.cwd(), background.parent, calls.parent, sdf_dir}:
+                base_cmd += ["-B", f"{p}:{p}"]
+            base_cmd += [str(singularity_img)]
+
+        cmd = base_cmd + [
+            "rtg", f"RTG_MEM={mem_gb}G", "vcfeval",
+            "-t", str(sdf_dir),
+            "-b", str(background),
+            "-c", str(calls),
+            "--squash-ploidy", "--sample", "ALT,ALT",
+            "--threads", str(threads),
+            "--output-mode", "split",
+            "-o", str(outdir),
+        ]
+
+        subprocess.run(cmd, check=True)
+        tp_o = out_prefix.with_suffix(".tp.vcf.gz")
+        fp_o = out_prefix.with_suffix(".fp.vcf.gz")
+        fn_o = out_prefix.with_suffix(".fn.vcf.gz")
+        shutil.copyfile(outdir / "tp.vcf.gz", tp_o); tabix_index(tp_o)
+        shutil.copyfile(outdir / "fp.vcf.gz", fp_o); tabix_index(fp_o)
+        shutil.copyfile(outdir / "fn.vcf.gz", fn_o); tabix_index(fn_o)
+    return {'both': tp_o, 'a_only': fp_o, 'b_only': fn_o}
+
+def _wc_l(cmd: list[str]) -> int:
+    p1 = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=False)
+    p2 = subprocess.Popen(["wc", "-l"], stdin=p1.stdout, stdout=subprocess.PIPE, text=True)
+    p1.stdout.close()
+    out, _ = p2.communicate()
+    return int(out.strip()) if out and out.strip() else 0
+
+def count_variant_types_bcftools(vcf: Path) -> Dict[str, int]:
+    """
+    Count variants by type using bcftools (no custom parsing).
+    Returns: {'snv': N, 'indel': N, 'both': N}
+    """
+    vcf = Path(vcf)
+    snv   = _wc_l(["bcftools", "view", "-H", "-v", "snps",   str(vcf)])
+    indel = _wc_l(["bcftools", "view", "-H", "-v", "indels", str(vcf)])
+    both  = _wc_l(["bcftools", "view", "-H",            str(vcf)])
+    return {"snv": snv, "indel": indel, "both": both}
+
+def call_state_by_type(tp: Path, fp: Path, fn: Path) -> Dict[str, Dict[str, int]]:
+    """
+    Count TP/FP/FN by type via bcftools (no custom parsing).
+    Returns: {'snv': {'TP':..,'FP':..,'FN':..}, 'indel': {...}, 'both': {...}}
+    """
+    tp_c = count_variant_types_bcftools(tp)
+    fp_c = count_variant_types_bcftools(fp)
+    fn_c = count_variant_types_bcftools(fn)
+    out = {}
+    for k in ("snv","indel","both"):
+        out[k] = {"TP": tp_c[k], "FP": fp_c[k], "FN": fn_c[k]}
+    return out
+
+def normalize_all_vcfs(
+    vcf_dict: Dict[str, Path],
+    output_dir: Path,
+    reference: Path,
+    bed: Optional[Path] = None,
+    label: str = "vcf",
+) -> Dict[str, Path]:
+    """
+    Normalize all VCFs in a dictionary.
+    
+    Args:
+        vcf_dict: Dictionary mapping ID -> VCF path
+        output_dir: Directory for normalized VCFs
+        reference: Reference genome
+        bed: Optional BED file
+        label: Label for output files
+    
+    Returns:
+        Dictionary mapping ID -> normalized VCF path
+    """
+    logger.info(f"Normalizing {len(vcf_dict)} {label} VCFs...")
+    
+    norm_dir = output_dir / f"normalized_{label}"
+    norm_dir.mkdir(parents=True, exist_ok=True)
+    
+    normalized = {}
+    for vcf_id, vcf_path in vcf_dict.items():
+        logger.debug(f"  Normalizing {vcf_id}")
+        norm_vcf = normalize_vcf(
+            vcf_path,
+            norm_dir / f"{vcf_id}_norm.vcf.gz",
+            reference,
+            target_bed=bed
+        )
+        normalized[vcf_id] = norm_vcf
+    
+    logger.info(f"Normalized {len(normalized)} {label} VCFs")
+    return normalized
+
+def find_private_variants(
+    individual_id: str,
+    individual_vcf: Path,
+    other_vcfs: List[Path],
+    output_dir: Path,
+) -> Path:
+    """
+    Find variants private to an individual using bcftools isec.
+    
+    Assumes all VCFs are already normalized.
+    
+    Args:
+        individual_id: ID of the individual
+        individual_vcf: Normalized VCF for the individual
+        other_vcfs: Normalized VCFs for all other individuals in their pools
+        output_dir: Working directory
+    
+    Returns:
+        Path to VCF with private variants
+    """
+    logger.debug(f"Finding private variants for {individual_id}")
+    
+    # Use bcftools isec to find variants unique to individual
+    isec_dir = output_dir / individual_id
+    isec_dir.mkdir(exist_ok=True)
+    
+    cmd = [
+        "bcftools", "isec",
+        "-n=1",  # Present in exactly 1 file
+        "-w", "1",  # Write the first file's unique variants
+        "-c", "none",
+        "-p", str(isec_dir),
+        "-Oz",
+        "-W=tbi",
+        str(individual_vcf)
+    ] + [str(v) for v in other_vcfs]
+    
+    logger.debug(f"Running: {' '.join(cmd)}")
+    
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        logger.error(f"bcftools isec failed for {individual_id}")
+        logger.error(f"stderr: {e.stderr}")
+        raise
+    
+    # Output is in 0000.vcf.gz (first file's unique variants)
+    private_vcf = isec_dir / "0000.vcf.gz"
+    
+    if not private_vcf.exists():
+        logger.error(f"Private variants VCF not created: {private_vcf}")
+        raise FileNotFoundError(f"bcftools isec did not create {private_vcf}")
+
+    return private_vcf
 
 
 if __name__ == "__main__":

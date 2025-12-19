@@ -1,4 +1,4 @@
-name: dwf_filter
+name: dwf-filter
 channels:
   - conda-forge
   - bioconda
@@ -23,12 +23,23 @@ dependencies:
   - r-essentials
   - r-readr
   - r-dplyr
+  - r-tidyr
   - r-ggplot2
   - r-forcats
   - r-proc
   - r-boot
   - r-patchwork
   - r-ggpubr
+  - r-ggthemes
+
+  # Benchmarking
+  - bcftools
+  - htslib
+  - rtg-tools
+
+  # Simulation package
+  - pip:
+    - dwf-sim==0.1.1
 
 variables:
   R_LIBS_USER: ${CONDA_PREFIX}/lib/R/library
