@@ -44,15 +44,15 @@ The study was performed in the following steps:
 
 2. The files were subset to illumina trushight hereditary target panel using the script: `src/07_subset_1KGP.sh`
 
-3. Individuals for the matrices (sizes = (2,5,10,24)) were sampled using the following `dwf-sim` command:
+3. Individuals for the matrices were sampled using the following `dwf-sim` command:
 
 ```Bash
 dwf-sim sample-1kg \
   --vcf data/all.subset.noSV.sorted.vcf.gz \
   --sample-table data/sample_population_codes.tsv \
   --pedigree data/1kGP.3202_samples.pedigree_info.txt \
-  --matrix-size 2 \
-  --non-eur-fraction 0.0 \ # 0.45 for size=24
+  --matrix-size {2,5,10,24} \
+  --non-eur-fraction {0.0,0.45} \ # 0.45 for size=24
   --reference data/gatk-resource-bundle/hg38/v0/Homo_sapiens_assembly38.fasta \
   --output-dir 1kg 
 ```
@@ -96,3 +96,4 @@ Rscript src/plot/plot_06a_variant_filter_benchmark.R
 Rscript src/plot/plot_06b_variant_filter_benchmark.R
 Rscript src/plot/plot_09_simulation_benchmark.R
 ```
+
