@@ -7,6 +7,7 @@
 
 library(readr)
 library(dplyr)
+library(tidyr)
 library(ggplot2)
 library(forcats)
 library(patchwork)
@@ -15,17 +16,60 @@ titlesize <- 8
 textsize <- 7
 subtitlesize <- 8
 
-plot_data <- 
-  read_tsv('data/variant_filter_benchmark_pins.tsv', show_col_types = F) %>% 
-  filter(filtering != 'baseline') %>% 
-  filter(filtering != 'HT') %>% 
-  mutate(caller = if_else(caller_type == 'joint', 'GATK joint', 'GATK')) %>% 
+df_pins <- 
+  read_tsv('data/variant_filter_benchmark_pins.tsv', show_col_types = F)
+
+# Calculate metrics from TP/FP/FN
+calc_metrics <- function(tp, fp, fn) {
+  tibble(
+    TP = tp,
+    FP = fp,
+    FN = fn,
+    sensitivity = tp / (tp + fn),
+    precision = tp / (tp + fp),
+    F1 = (2 * tp) / (2 * tp + fp + fn),
+    FDR = fp / (fp + tp)
+  )
+}
+
+# Aggregate by config and variant_type
+aggregated <- 
+  df_pins %>%
+  group_by(config, filter_method, caller_type, variant_type) %>%
+  summarise(TP = sum(TP), FP = sum(FP), FN = sum(FN), .groups = 'drop') %>%
+  rowwise() %>%
+  mutate(calc_metrics(TP, FP, FN)) %>%
+  ungroup()
+
+# Get baseline metrics
+baseline <- aggregated %>%
+  filter(filter_method == 'baseline') %>%
+  select(caller_type, variant_type, 
+         baseline_sensitivity = sensitivity,
+         baseline_F1 = F1,
+         baseline_FDR = FDR)
+
+# Join baseline to filtering methods and convert to long format
+plot_data <- aggregated %>%
+  filter(config != 'ht') %>% 
+  filter(filter_method != 'baseline') %>%
+  left_join(baseline, by = c('caller_type', 'variant_type')) %>%
+  pivot_longer(cols = c(sensitivity, F1, FDR),
+               names_to = 'metric',
+               values_to = 'value') %>%
+  mutate(baseline = case_when(
+    metric == 'sensitivity' ~ baseline_sensitivity,
+    metric == 'F1' ~ baseline_F1,
+    metric == 'FDR' ~ baseline_FDR
+  )) %>%
+  select(filtering = filter_method, caller_type, variant_type, metric, value, baseline) %>%
+  mutate(variant_type = if_else(variant_type == 'BOTH', 'all', variant_type)) %>%
+  mutate(caller = if_else(caller_type == 'joint', 'GATK joint', 'GATK')) %>%
   mutate(direction = if_else(((metric == 'F1' | metric == 'sensitivity') & (value - baseline > 0)) |
-                               (metric == 'FDR' & (value - baseline < 0)), 'up', 'down')) %>% 
-  mutate(filtering = factor(filtering, levels = c('HT', 'ML-S', 'ML-F1', 'VQSR')),
+                               (metric == 'FDR' & (value - baseline < 0)), 'up', 'down')) %>%
+  mutate(filtering = factor(filtering, levels = c('ML-S', 'ML-F1', 'VQSR')),
          caller_position = interaction(caller, filtering))
 
-# Plotting function:
 create_metric_plot <- function(data, variant_type_filter, metric_filter, y_limits, plot_title) {
   data %>% 
     filter(variant_type == variant_type_filter) %>% 
@@ -34,7 +78,7 @@ create_metric_plot <- function(data, variant_type_filter, metric_filter, y_limit
     geom_point(aes(x = caller_position, y = baseline, color = "Baseline"), size = 0.7) +
     geom_segment(aes(y = baseline, yend = value, color = direction),
                  arrow = arrow(length = unit(0.02, "npc")),
-                 size = 0.7,
+                 linewidth = 0.7,
                  show.legend = FALSE) +
     scale_color_manual(name = NULL,
                        values = c("up" = "darkgreen",
@@ -52,12 +96,6 @@ create_metric_plot <- function(data, variant_type_filter, metric_filter, y_limit
     labs(x = NULL, y = NULL) +
     ggtitle(plot_title)
 }
-
-# Plot all pinpointables:
-sens_pin_all_plot <- create_metric_plot(plot_data, 'all', 'sensitivity', c(0.8, 1), 'Sensitivity')
-fdr_pin_all_plot <- create_metric_plot(plot_data, 'all', 'FDR', c(0, 0.15), 'FDR')
-f1_pin_all_plot <- create_metric_plot(plot_data, 'all', 'F1', c(0.8, 1), 'F1-score')
-pin_bench_all_plot <- sens_pin_all_plot | fdr_pin_all_plot | f1_pin_all_plot + theme()
 
 # SNVs
 sens_pin_snv_plot <- create_metric_plot(plot_data, 'SNV', 'sensitivity', c(0.8, 1), 'Sensitivity')
