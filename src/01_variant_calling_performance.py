@@ -12,15 +12,15 @@ import tempfile
 import pandas as pd
 
 # Setup paths
-output = Path('./output_pool_manuscript')
+output = Path('./benchmark_pool_E1')
 output.mkdir(exist_ok=True)
-sampletable = Path('data/E1/cramtable_pool_E1.tsv')
+sampletable = Path('data/E1/sampletable_E1.tsv')
 decodetable = Path('data/E1/decodetable.tsv')
 wgs_vcfs = Path('data/E1/wgs')
-sdf = Path('/ngc/projects2/dp_00005/data/dwf/projects/benchmark/data/reference/Homo_sapiens_assembly38_noAlt.sdf')
-ref = Path('/ngc/projects2/dp_00005/data/dwf/projects/benchmark/data/reference/Homo_sapiens_assembly38_noAlt.fna')
-bedfile = Path('/ngc/projects2/dp_00005/data/dwf/projects/benchmark/data/TruSight_Hereditary_Cancer_TargetedRegions_v2_hg38.bed')
-rtg_img = Path('/ngc/projects2/dp_00005/data/dwf/bin/container_cache/quay.io-singularity-rtg-tools-3.12.1--hdfd78af_0.img')
+sdf = Path('data/reference/Homo_sapiens_assembly38_noAlt.sdf')
+ref = Path('data/reference/Homo_sapiens_assembly38_noAlt.fna')
+bedfile = Path('data/TruSight_Hereditary_Cancer_TargetedRegions_v2_hg38.bed')
+rtg_img = Path('data/dwf/bin/container_cache/quay.io-singularity-rtg-tools-3.12.1--hdfd78af_0.img')
 
 caller_config = {
     'gatk_joint': {
